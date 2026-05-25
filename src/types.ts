@@ -1,0 +1,103 @@
+export type UserRole = 'super_admin' | 'admin' | 'sales_team';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  avatarUrl?: string;
+  department: string;
+  password?: string;
+}
+
+export type LeadSource = 
+  | 'Meta Ad' 
+  | 'Google Ad' 
+  | 'IVR Board' 
+  | 'IVR' 
+  | 'Reference' 
+  | 'Website' 
+  | 'Social Media' 
+  | 'Personal' 
+  | 'Cold Call';
+
+export type LeadStatus = 
+  | 'Interested' 
+  | 'Follow Up' 
+  | 'Detailed Share' 
+  | 'Not Interested' 
+  | 'Meeting Done' 
+  | 'Site Visit' 
+  | 'Call Back' 
+  | 'Junk' 
+  | 'Duplicate';
+
+export type LeadTemperature = 'Hot' | 'Warm' | 'Cold' | 'Dead';
+
+export interface Lead {
+  id: string;
+  name: string; // Customer Name
+  company?: string; // Optional Company name (if applicable)
+  position?: string;
+  email: string;
+  phone: string;
+  source: LeadSource;
+  status: LeadStatus;
+  temperature: LeadTemperature;
+  budget: string;
+  location: string;
+  assignedAgent: string; // Assign To
+  notes: string;
+  dateCreated: string;
+  dateUpdated: string;
+  lastCommunication: string;
+  score?: number; // Priority rating (1-100)
+}
+
+export type AppointmentType = 'meeting' | 'site_visit' | 'call' | 'followup';
+
+export interface Appointment {
+  id: string;
+  leadId?: string;
+  leadName?: string;
+  title: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  type: AppointmentType;
+  notes: string;
+  isCompleted: boolean;
+  reminderActive: boolean;
+}
+
+export interface CommunicationLog {
+  id: string;
+  leadId: string;
+  date: string;
+  type: 'email' | 'call' | 'meeting' | 'site_visit' | 'proposal';
+  content: string;
+  sender: string;
+}
+
+export interface SalesStat {
+  month: string;
+  leadsAdded: number;
+  dealsWon: number;
+  revenue: number; // in Millions
+  target: number; // in Millions
+}
+
+export interface LeadEditFieldChange {
+  field: string;
+  oldValue: string;
+  newValue: string;
+}
+
+export interface LeadEditLog {
+  id: string;
+  leadId: string;
+  leadName: string;
+  editorName: string;
+  editorRole: string;
+  timestamp: string;
+  changes: LeadEditFieldChange[];
+}
