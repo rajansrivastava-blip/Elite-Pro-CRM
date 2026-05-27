@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { Lead, CommunicationLog, User, LeadEditLog } from "../types";
+import * as XLSX from "xlsx";
 import { 
   Search, 
   Filter, 
@@ -24,13 +25,16 @@ import {
   ChevronDown,
   Lock,
   History,
-  UserCheck
+  UserCheck,
+  Upload,
+  FileSpreadsheet
 } from "lucide-react";
 
 interface LeadPipelineProps {
   leads: Lead[];
   users?: User[];
   onAddLead: (lead: Omit<Lead, "id" | "dateCreated" | "dateUpdated">) => void;
+  onBulkAddLeads?: (leads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[]) => void;
   onUpdateLead: (lead: Lead) => void;
   onDeleteLead: (id: string) => void;
   communicationLogs: CommunicationLog[];
@@ -44,6 +48,7 @@ export default function LeadPipeline({
   leads,
   users,
   onAddLead,
+  onBulkAddLeads,
   onUpdateLead,
   onDeleteLead,
   communicationLogs,
@@ -63,6 +68,196 @@ export default function LeadPipeline({
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeadForAI, setSelectedLeadForAI] = useState<Lead | null>(null);
+
+  // CSV/Excel Importer States
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importPreviewData, setImportPreviewData] = useState<any[]>([]);
+  const [fileName, setFileName] = useState<string>("");
+  const [dragActive, setDragActive] = useState<boolean>(false);
+
+  // Download CSV Template function
+  const downloadImportTemplate = () => {
+    const csvContent = "CUSTOMER NAME,PROJECT NAME,EMAIL ADDRESS,PHONE NUMBER,LEAD SOURCE,PHYSICAL LOCATION,LEAD STATUS,LEAD PRIORITY,BUDGET,NOTES (CONSULTATION SYNOPSIS BRIEF)\n" +
+      "Rajesh Kumar,Apex Net-Zero Warehouse,rajesh@gmail.com,9876543210,Google Ad,Delhi NCR,Interested,Hot,₹15 Cr,Looking for warehouse space with highway connectivity.\n" +
+      "Heena Sharma,Vortex Hyper-scale DC,heena.sharma@corp.com,9988776655,Meta Ad,Bangalore,Follow Up,Warm,₹45 Cr,Seeking 30MW redundant grid architecture solar sync.";
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "ElitePro_Leads_Import_Template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Process CSV/Excel
+  const handleFileImport = (file: File) => {
+    if (!file) return;
+    setFileName(file.name);
+    setImportError(null);
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = e.target?.result;
+        if (!data) throw new Error("Could not read file data.");
+
+        const workbook = XLSX.read(data, { type: "binary" });
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        
+        // Read raw sheet array of arrays
+        const rawJson: any[] = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        if (rawJson.length < 2) {
+          throw new Error("The file has no data rows. Must contain at least a header row and one data row.");
+        }
+
+        // Clean headers
+        const headers = rawJson[0].map((h: any) => String(h || "").trim().toLowerCase());
+        
+        // Map columns (fuzzy matches)
+        const nameIdx = headers.findIndex((h: string) => h.includes("customer name") || h === "name" || h === "customer");
+        const projectIdx = headers.findIndex((h: string) => h.includes("project name") || h === "project");
+        const emailIdx = headers.findIndex((h: string) => h.includes("email") || h === "mail" || h.includes("email address"));
+        const phoneIdx = headers.findIndex((h: string) => h.includes("phone") || h === "contact" || h.includes("phone number") || h === "mobile");
+        const sourceIdx = headers.findIndex((h: string) => h.includes("source") || h === "lead source");
+        const locationIdx = headers.findIndex((h: string) => h.includes("location") || h === "physical location" || h === "address" || h === "city");
+        const statusIdx = headers.findIndex((h: string) => h === "status" || h.includes("lead status") || h === "stage");
+        const priorityIdx = headers.findIndex((h: string) => h === "priority" || h.includes("priority") || h.includes("lead priority") || h === "temperature" || h.includes("temp"));
+        const budgetIdx = headers.findIndex((h: string) => h === "budget" || h.includes("budget") || h.includes("capital budget"));
+        const notesIdx = headers.findIndex((h: string) => h === "notes" || h.includes("notes") || h.includes("consultation synopsis") || h === "synopsis" || h.includes("consultation synopsis brief"));
+
+        if (nameIdx === -1) {
+          throw new Error("Missing critical header mapping: 'CUSTOMER NAME' column is required.");
+        }
+
+        const parsedLeads: any[] = [];
+
+        for (let i = 1; i < rawJson.length; i++) {
+          const row = rawJson[i];
+          if (!row || row.length === 0 || row[nameIdx] === undefined || row[nameIdx] === null) continue;
+
+          const rawName = String(row[nameIdx]).trim();
+          if (!rawName) continue;
+
+          const rawProj = projectIdx !== -1 && row[projectIdx] !== undefined ? String(row[projectIdx]).trim() : "";
+          const rawEmail = emailIdx !== -1 && row[emailIdx] !== undefined ? String(row[emailIdx]).trim() : "";
+          const rawPhone = phoneIdx !== -1 && row[phoneIdx] !== undefined ? String(row[phoneIdx]).trim() : "";
+          const rawSourceStr = sourceIdx !== -1 && row[sourceIdx] !== undefined ? String(row[sourceIdx]).trim() : "Website";
+          const rawLoc = locationIdx !== -1 && row[locationIdx] !== undefined ? String(row[locationIdx]).trim() : "Noida, India";
+          const rawStatusStr = statusIdx !== -1 && row[statusIdx] !== undefined ? String(row[statusIdx]).trim() : "Interested";
+          const rawPriorityStr = priorityIdx !== -1 && row[priorityIdx] !== undefined ? String(row[priorityIdx]).trim() : "Warm";
+          const rawBudget = budgetIdx !== -1 && row[budgetIdx] !== undefined ? String(row[budgetIdx]).trim() : "₹1.0 Cr";
+          const rawNotes = notesIdx !== -1 && row[notesIdx] !== undefined ? String(row[notesIdx]).trim() : "";
+
+          // Match Source safely
+          const validSources = ['Meta Ad', 'Google Ad', 'IVR Board', 'IVR', 'Reference', 'Website', 'Social Media', 'Personal', 'Cold Call'];
+          let finalSource: any = "Website";
+          const matchedSource = validSources.find(s => s.toLowerCase() === rawSourceStr.toLowerCase() || rawSourceStr.toLowerCase().replace(/\sAd$/i, "") === s.toLowerCase().replace(/\sAd$/i, ""));
+          if (matchedSource) finalSource = matchedSource;
+
+          // Match Status safely
+          const validStatuses = ['Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate'];
+          let finalStatus: any = "Interested";
+          const matchedStatus = validStatuses.find(s => s.toLowerCase() === rawStatusStr.toLowerCase() || s.toLowerCase().replace(/\s+/g, "") === rawStatusStr.toLowerCase().replace(/\s+/g, ""));
+          if (matchedStatus) finalStatus = matchedStatus;
+
+          // Match Priority safely
+          let finalTemperature: any = "Warm";
+          const lowerPriority = rawPriorityStr.toLowerCase();
+          if (lowerPriority.includes("hot") || lowerPriority.includes("high")) {
+            finalTemperature = "Hot";
+          } else if (lowerPriority.includes("cold") || lowerPriority.includes("low")) {
+            finalTemperature = "Cold";
+          } else if (lowerPriority.includes("dead")) {
+            finalTemperature = "Dead";
+          } else if (lowerPriority.includes("warm") || lowerPriority.includes("medium")) {
+            finalTemperature = "Warm";
+          }
+
+          const scoreMap: Record<string, number> = { "Hot": 90, "Warm": 65, "Cold": 30, "Dead": 5 };
+          const finalScore = scoreMap[finalTemperature] || 50;
+
+          // Ensure automatic assignment is bound exactly to owner/importing client account:
+          const finalAdvisor = currentUser?.name || "Rajan Srivastava";
+
+          parsedLeads.push({
+            name: rawName,
+            projectName: rawProj,
+            email: rawEmail || `${rawName.toLowerCase().replace(/[^a-z0-9]/g, "")}@example.com`,
+            phone: rawPhone || "N/A",
+            source: finalSource,
+            location: rawLoc,
+            status: finalStatus,
+            temperature: finalTemperature,
+            budget: rawBudget,
+            assignedAgent: finalAdvisor, // Set to self
+            notes: rawNotes ? rawNotes : "Imported via spreadsheet batch ingestion.",
+            score: finalScore,
+          });
+        }
+
+        if (parsedLeads.length === 0) {
+          throw new Error("Processed 0 files. Check that CUSTOMER NAME values are defined.");
+        }
+
+        setImportPreviewData(parsedLeads);
+      } catch (err: any) {
+        console.error("Parse error:", err);
+        setImportError(err.message || "Failed to parse files. Please check template column structures.");
+      }
+    };
+
+    reader.onerror = () => {
+      setImportError("Error occurred reading this file.");
+    };
+
+    reader.readAsBinaryString(file);
+  };
+
+  // Drag handlers
+  const handleDrag = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.type === "dragenter" || e.type === "dragover") {
+      setDragActive(true);
+    } else if (e.type === "dragleave") {
+      setDragActive(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileImport(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFileImport(e.target.files[0]);
+    }
+  };
+
+  // Commit ingestion
+  const handleCommitImport = () => {
+    if (importPreviewData.length === 0) return;
+    if (onBulkAddLeads) {
+      onBulkAddLeads(importPreviewData);
+    } else {
+      importPreviewData.forEach(l => onAddLead(l));
+    }
+    
+    setIsImportModalOpen(false);
+    setImportPreviewData([]);
+    setFileName("");
+    setImportError(null);
+  };
   
   // AI Email Generator states
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false);
@@ -79,14 +274,15 @@ export default function LeadPipeline({
     position: "",
     email: "",
     phone: "",
-    status: "Interested" as Lead["status"],
+    status: "" as any,
     source: "Website" as Lead["source"],
-    temperature: "Warm" as Lead["temperature"],
-    budget: "₹15.0 Cr",
+    temperature: "" as any,
+    budget: "",
     notes: "",
-    location: "Noida, India",
+    location: "" as any,
     assignedAgent: currentUser?.role === "sales_team" ? currentUser.name : "Rajan Srivastava",
-    score: 75
+    score: 75,
+    projectName: ""
   }));
 
   const presetAgents = [
@@ -100,12 +296,23 @@ export default function LeadPipeline({
     "Vikram Singh"
   ];
 
-  const finalAgents = users && users.length > 0 ? users.map((u) => u.name) : presetAgents;
+  const finalAgents = useMemo(() => {
+    if (!users || users.length === 0) return presetAgents;
+    if (currentUser?.role === "team_leader") {
+      return users
+        .filter(u => u.id === currentUser.id || u.teamLeaderId === currentUser.id)
+        .map(u => u.name);
+    }
+    return users.map((u) => u.name);
+  }, [users, currentUser]);
 
   const [showNewAgentDropdown, setShowNewAgentDropdown] = useState(false);
   const [showEditAgentDropdown, setShowEditAgentDropdown] = useState(false);
 
-  const isAuthorizedToAssign = !currentUser || currentUser.role === "super_admin" || currentUser.role === "admin";
+  const isAuthorizedToAssign = !currentUser || 
+    currentUser.role === "super_admin" || 
+    currentUser.role === "admin" ||
+    currentUser.role === "team_leader";
 
   const filteredLeads = leads.filter(lead => {
     const matchesSearch = 
@@ -127,6 +334,10 @@ export default function LeadPipeline({
     if (!newLeadForm.name) return;
     onAddLead({
       ...newLeadForm,
+      status: newLeadForm.status || "Interested",
+      temperature: newLeadForm.temperature || "Warm",
+      location: newLeadForm.location || "Noida, India",
+      budget: newLeadForm.budget || "₹15.0 Cr",
       lastCommunication: new Date().toISOString().split("T")[0]
     });
     // Reset
@@ -136,14 +347,15 @@ export default function LeadPipeline({
       position: "",
       email: "",
       phone: "",
-      status: "Interested",
+      status: "" as any,
       source: "Website",
-      temperature: "Warm",
-      budget: "₹15.0 Cr",
+      temperature: "" as any,
+      budget: "",
       notes: "",
-      location: "Noida, India",
+      location: "" as any,
       assignedAgent: currentUser?.role === "sales_team" ? currentUser.name : "Rajan Srivastava",
-      score: 75
+      score: 75,
+      projectName: ""
     });
     setIsAddModalOpen(false);
   };
@@ -193,7 +405,7 @@ export default function LeadPipeline({
     } catch (err: any) {
       console.error(err);
       setEmailSubject("Elite Pro Follow-Up | Corporate Real Estate Alignment");
-      setEmailBody(`Dear ${lead.name},\n\nThank you for exploring premium real estate opportunities with Elite Pro Infra. Regarding your inquiries via ${lead.source} with a capital budget range of ${lead.budget}, we are eager to coordinate an advisory alignment session.\n\nBest regards,\nRajan Srivastava\nElite Pro Infra`);
+      setEmailBody(`Dear ${lead.name},\n\nThank you for exploring premium real estate opportunities with Elite Pro. Regarding your inquiries via ${lead.source} with a capital budget range of ${lead.budget}, we are eager to coordinate an advisory alignment session.\n\nBest regards,\nRajan Srivastava\nElite Pro`);
     } finally {
       setIsGeneratingEmail(false);
     }
@@ -290,6 +502,7 @@ export default function LeadPipeline({
       case "assignedAgent": return "Assigned Advisor";
       case "notes": return "Consultation Synopsis (Notes)";
       case "score": return "Priority Rating Score";
+      case "projectName": return "Project Name";
       default: return field.replace(/([A-Z])/g, ' $1').toUpperCase();
     }
   };
@@ -337,10 +550,20 @@ export default function LeadPipeline({
             <button
               id="register-lead-btn"
               onClick={() => setIsAddModalOpen(true)}
-              className="px-4.5 py-2.5 rounded-xl bg-teal-605 hover:bg-teal-550 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-teal-605/15 flex items-center gap-2 cursor-pointer active:scale-95"
+              className="px-4.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-teal-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
             >
               <Plus size={16} />
               Register New Lead
+            </button>
+
+            <button
+              id="import-spreadsheet-btn"
+              onClick={() => setIsImportModalOpen(true)}
+              className="px-4.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-550 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-emerald-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
+              title="Bulk import leads from CSV, XLS, or XLSX spreadsheets"
+            >
+              <FileSpreadsheet size={16} />
+              Import Spreadsheet
             </button>
           </div>
         </div>
@@ -552,8 +775,13 @@ export default function LeadPipeline({
                         {lead.company}
                       </span>
                     )}
-                    <h4 className="font-display font-bold text-lg leading-tight mt-0.5 group-hover:text-teal-500 transition duration-150">
-                      {lead.name}
+                    <h4 className="font-display font-bold text-lg leading-tight mt-0.5 group-hover:text-teal-500 transition duration-150 flex flex-wrap items-center gap-2">
+                      <span>{lead.name}</span>
+                      {lead.projectName && (
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20 font-medium">
+                          {lead.projectName}
+                        </span>
+                      )}
                     </h4>
                     <p className={`text-xs mt-0.5 ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
                       {lead.position || "Private Client"} | <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
@@ -640,7 +868,7 @@ export default function LeadPipeline({
                   <button 
                     id={`trigger-ai-email-${lead.id}`}
                     onClick={() => generateAIFollowUp(lead)}
-                    className="flex-1 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-605 hover:bg-teal-550 border border-teal-50/10 text-white flex items-center justify-center gap-2 cursor-pointer transition active:scale-95 shadow-md shadow-teal-500/10"
+                    className="flex-1 px-3 py-2 rounded-xl text-xs font-semibold bg-teal-600 hover:bg-teal-700 border border-teal-50/10 text-white flex items-center justify-center gap-2 cursor-pointer transition active:scale-95 shadow-md shadow-teal-500/10"
                   >
                     <Sparkles size={11} className="text-amber-300 animate-pulse" />
                     Draft AI Advisory Email
@@ -696,7 +924,7 @@ export default function LeadPipeline({
           >
             <button 
               onClick={() => setSelectedLeadForAI(null)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+              className="absolute top-4 right-4 text-slate-400 dark:hover:text-white hover:text-slate-800 transition-colors"
             >
               <X size={20} />
             </button>
@@ -707,7 +935,7 @@ export default function LeadPipeline({
               </div>
               <div>
                 <h3 className="font-display font-bold text-lg">AI Strategic Auto-Followup</h3>
-                <p className="text-xs text-slate-450">Elite Pro Infra Automated Client Response Assistant</p>
+                <p className="text-xs text-slate-450">Elite Pro Automated Client Response Assistant</p>
               </div>
             </div>
 
@@ -845,7 +1073,7 @@ export default function LeadPipeline({
           >
             <button 
               onClick={() => setIsAddModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-450 hover:text-white"
+              className="absolute top-4 right-4 text-slate-450 dark:hover:text-white hover:text-slate-800 transition-colors"
             >
               <X size={20} />
             </button>
@@ -853,18 +1081,33 @@ export default function LeadPipeline({
             <h3 className="font-display font-bold text-lg border-b border-slate-100/10 pb-3 mb-4">Register Capital Investor Lead</h3>
 
             <form onSubmit={handleAddNewLead} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Customer Name *</label>
-                <input
-                  id="new-lead-name"
-                  required
-                  type="text"
-                  placeholder="Enter customer name"
-                  value={newLeadForm.name}
-                  onChange={(e) => setNewLeadForm({ ...newLeadForm, name: e.target.value })}
-                  className={`w-full px-3 py-2 text-xs rounded-lg border 
-                    ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Customer Name *</label>
+                  <input
+                    id="new-lead-name"
+                    required
+                    type="text"
+                    placeholder="Enter customer name"
+                    value={newLeadForm.name}
+                    onChange={(e) => setNewLeadForm({ ...newLeadForm, name: e.target.value })}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border 
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Project Name</label>
+                  <input
+                    id="new-lead-project"
+                    type="text"
+                    placeholder="Enter project name (e.g. EMAAR IBC)"
+                    value={newLeadForm.projectName || ""}
+                    onChange={(e) => setNewLeadForm({ ...newLeadForm, projectName: e.target.value })}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border 
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -921,6 +1164,7 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Physical Location</label>
                   <input
                     id="new-lead-location"
+                    required
                     type="text"
                     placeholder="e.g. Noida Sector 62, India"
                     value={newLeadForm.location}
@@ -931,16 +1175,18 @@ export default function LeadPipeline({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Status</label>
                   <select
                     id="new-lead-status"
+                    required
                     value={newLeadForm.status}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, status: e.target.value as Lead["status"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
                   >
+                    <option value="">-- Select Status --</option>
                     <option value="Interested">Interested</option>
                     <option value="Follow Up">Follow Up</option>
                     <option value="Detailed Share">Detailed Share</option>
@@ -957,22 +1203,27 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Priority</label>
                   <select
                     id="new-lead-temperature"
+                    required
                     value={newLeadForm.temperature}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, temperature: e.target.value as Lead["temperature"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
                   >
+                    <option value="">-- Select Priority --</option>
                     <option value="Hot">🔥 Hot</option>
                     <option value="Warm">☀️ Warm</option>
                     <option value="Cold">❄️ Cold</option>
                     <option value="Dead">🫙 Dead</option>
                   </select>
                 </div>
+              </div>
 
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Budget</label>
                   <input
                     id="new-lead-budget"
+                    required
                     type="text"
                     placeholder="e.g. ₹15.0 Cr"
                     value={newLeadForm.budget}
@@ -1012,7 +1263,7 @@ export default function LeadPipeline({
                     <button
                       type="button"
                       onClick={() => setShowNewAgentDropdown(!showNewAgentDropdown)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 pointer-events-auto"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 dark:hover:text-slate-300 hover:text-slate-600 pointer-events-auto"
                     >
                       <ChevronDown size={14} className={`transform transition-transform ${showNewAgentDropdown ? "rotate-180" : ""}`} />
                     </button>
@@ -1038,7 +1289,7 @@ export default function LeadPipeline({
                 </div>
                 {!isAuthorizedToAssign && (
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Only Super Admin and Admin roles can assign or change lead ownership.
+                    Only administrators and team leaders can assign or change lead ownership.
                   </p>
                 )}
               </div>
@@ -1087,7 +1338,7 @@ export default function LeadPipeline({
           >
             <button 
               onClick={() => setEditingLead(null)}
-              className="absolute top-4 right-4 text-slate-450 hover:text-white"
+              className="absolute top-4 right-4 text-slate-450 dark:hover:text-white hover:text-slate-800 transition-colors"
             >
               <X size={20} />
             </button>
@@ -1095,17 +1346,32 @@ export default function LeadPipeline({
             <h3 className="font-display font-bold text-lg border-b border-slate-100/10 pb-3 mb-4">Edit Capital Real Estate Parameters</h3>
 
             <form onSubmit={handleEditSubmit} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Customer Name *</label>
-                <input
-                  id="edit-lead-name"
-                  required
-                  type="text"
-                  value={editingLead.name}
-                  onChange={(e) => setEditingLead({ ...editingLead, name: e.target.value })}
-                  className={`w-full px-3 py-2 text-xs rounded-lg border 
-                    ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Customer Name *</label>
+                  <input
+                    id="edit-lead-name"
+                    required
+                    type="text"
+                    value={editingLead.name}
+                    onChange={(e) => setEditingLead({ ...editingLead, name: e.target.value })}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border 
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Project Name</label>
+                  <input
+                    id="edit-lead-project"
+                    type="text"
+                    placeholder="Enter project name (e.g. EMAAR IBC)"
+                    value={editingLead.projectName || ""}
+                    onChange={(e) => setEditingLead({ ...editingLead, projectName: e.target.value })}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border 
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -1186,7 +1452,9 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Physical Location</label>
                   <input
                     id="edit-lead-location"
+                    required
                     type="text"
+                    placeholder="e.g. Noida Sector 62, India"
                     value={editingLead.location}
                     onChange={(e) => setEditingLead({ ...editingLead, location: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
@@ -1200,11 +1468,13 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Status</label>
                   <select
                     id="edit-lead-status"
+                    required
                     value={editingLead.status}
                     onChange={(e) => setEditingLead({ ...editingLead, status: e.target.value as Lead["status"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200 font-medium"}`}
                   >
+                    <option value="">-- Select Status --</option>
                     <option value="Interested">Interested</option>
                     <option value="Follow Up">Follow Up</option>
                     <option value="Detailed Share">Detailed Share</option>
@@ -1221,11 +1491,13 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Priority</label>
                   <select
                     id="edit-lead-temperature"
+                    required
                     value={editingLead.temperature}
                     onChange={(e) => setEditingLead({ ...editingLead, temperature: e.target.value as Lead["temperature"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
                   >
+                    <option value="">-- Select Priority --</option>
                     <option value="Hot">🔥 Hot</option>
                     <option value="Warm">☀️ Warm</option>
                     <option value="Cold">❄️ Cold</option>
@@ -1263,7 +1535,7 @@ export default function LeadPipeline({
                     <button
                       type="button"
                       onClick={() => setShowEditAgentDropdown(!showEditAgentDropdown)}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-300 pointer-events-auto"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 dark:hover:text-slate-300 hover:text-slate-600 pointer-events-auto"
                     >
                       <ChevronDown size={14} className={`transform transition-transform ${showEditAgentDropdown ? "rotate-180" : ""}`} />
                     </button>
@@ -1289,7 +1561,7 @@ export default function LeadPipeline({
                 </div>
                 {!isAuthorizedToAssign && (
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Only Super Admin and Admin roles can assign or change lead ownership.
+                    Only administrators and team leaders can assign or change lead ownership.
                   </p>
                 )}
               </div>
@@ -1323,6 +1595,180 @@ export default function LeadPipeline({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Bulk Lead Ingestion Console (CSV/Excel Imports) */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 transition-all overflow-y-auto">
+          <div 
+            id="bulk-import-modal"
+            className={`w-full max-w-2xl rounded-2xl border p-6 shadow-2xl relative my-8
+              ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-800"}`}
+          >
+            <button 
+              onClick={() => {
+                setIsImportModalOpen(false);
+                setImportPreviewData([]);
+                setFileName("");
+                setImportError(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 dark:hover:text-slate-200 hover:text-slate-800 transition-colors"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="flex items-center gap-2 mb-2 pb-3 border-b border-slate-100/10">
+              <FileSpreadsheet className="text-emerald-500" size={24} />
+              <h3 className="font-display font-bold text-lg">Bulk Lead Ingestion Console</h3>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4">
+              Import investor logs instantly via spreadsheet templates. Supports columns: 
+              <span className="font-mono text-[10px] text-teal-400 block mt-1 bg-slate-950/40 p-2 rounded border border-slate-800">
+                CUSTOMER NAME, PROJECT NAME, EMAIL ADDRESS, PHONE NUMBER, LEAD SOURCE, PHYSICAL LOCATION, LEAD STATUS, LEAD PRIORITY, BUDGET, NOTES (CONSULTATION SYNOPSIS BRIEF)
+              </span>
+            </p>
+
+            {/* Template downloader utility */}
+            <div className={`p-3 rounded-xl mb-4 border flex items-center justify-between gap-4
+              ${darkMode ? "bg-slate-950/40 border-slate-800/80" : "bg-slate-50 border-slate-150"}`}
+            >
+              <div>
+                <h5 className="text-[11px] font-semibold text-teal-400">Not sure about column layout configurations?</h5>
+                <p className="text-[10px] text-slate-400 mt-0.5">Grab our pre-packaged spreadsheet format containing pre-header mappings directly.</p>
+              </div>
+              <button
+                type="button"
+                onClick={downloadImportTemplate}
+                className="px-3.5 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white font-semibold text-[10px] uppercase cursor-pointer whitespace-nowrap active:scale-95 transition"
+              >
+                Download CSV Template
+              </button>
+            </div>
+
+            {/* Drop Zone Box */}
+            <div 
+              onDragEnter={handleDrag}
+              onDragOver={handleDrag}
+              onDragLeave={handleDrag}
+              onDrop={handleDrop}
+              className={`p-8 border-2 border-dashed rounded-xl flex flex-col items-center justify-center text-center cursor-pointer transition duration-150
+                ${dragActive 
+                  ? "border-emerald-500 bg-emerald-500/10" 
+                  : darkMode 
+                    ? "border-slate-800 bg-slate-950/40 hover:border-slate-700" 
+                    : "border-slate-250 bg-slate-50 hover:bg-slate-100/70"}`}
+              onClick={() => document.getElementById("file-loader-element")?.click()}
+            >
+              <Upload className={`mb-3 ${dragActive ? "text-emerald-400 animate-bounce" : "text-slate-400"}`} size={32} />
+              <p className="text-xs font-semibold mb-1">
+                {fileName ? `Loaded: ${fileName}` : "Drag and drop your spreadsheet file here"}
+              </p>
+              <p className="text-[10px] text-slate-400">Allows .CSV, .XLSX, or .XLS file types up to 10MB</p>
+              
+              <input
+                id="file-loader-element"
+                type="file"
+                accept=".csv, .xlsx, .xls"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+            </div>
+
+            {/* Error prompt */}
+            {importError && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-400 text-xs flex items-start gap-2">
+                <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                <div>
+                  <span className="font-semibold font-mono block">Spreadsheet Invalidation Blocked:</span>
+                  <span className="text-[11px] block mt-0.5">{importError}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Success Preview */}
+            {importPreviewData.length > 0 && (
+              <div className="mt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-emerald-400 flex items-center gap-1.5">
+                    <Check size={14} className="bg-emerald-500/10 p-0.5 rounded-full" />
+                    Ingested Spreadsheet Cache: {importPreviewData.length} records parsed
+                  </span>
+                  <span className="p-1 px-2 uppercase tracking-wide bg-amber-500/10 text-amber-500 font-bold font-mono text-[8px] rounded border border-amber-500/15">
+                    🔐 Assigned to: {currentUser?.name || "Self"}
+                  </span>
+                </div>
+
+                {/* Micro preview grid of parsed leads */}
+                <div className={`border rounded-xl max-h-[160px] overflow-y-auto overflow-x-auto text-left
+                  ${darkMode ? "border-slate-800 bg-slate-950/40 text-slate-300" : "border-slate-150 bg-slate-50 text-slate-700"}`}
+                >
+                  <table className="w-full text-[10px] font-sans">
+                    <thead className={`sticky top-0 font-mono tracking-wider text-[9px] border-b uppercase font-semibold
+                      ${darkMode ? "bg-slate-900 border-slate-850 text-slate-400" : "bg-slate-100 border-slate-200 text-slate-500"}`}
+                    >
+                      <tr>
+                        <th className="p-2 border-r border-slate-800/20">Name</th>
+                        <th className="p-2 border-r border-slate-800/20">Project Name</th>
+                        <th className="p-2 border-r border-slate-800/20">Source</th>
+                        <th className="p-2 border-r border-slate-800/20">Advisor Assigned</th>
+                        <th className="p-2 border-r border-slate-800/20">Location</th>
+                        <th className="p-2 border-r border-slate-800/20">Budget</th>
+                        <th className="p-2">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/10">
+                      {importPreviewData.map((lead, idx) => (
+                        <tr key={idx} className="hover:bg-slate-500/5">
+                          <td className="p-2 border-r border-slate-800/10 font-medium whitespace-nowrap">{lead.name}</td>
+                          <td className="p-2 border-r border-slate-800/10 font-mono italic text-[9px] whitespace-nowrap text-teal-400">{lead.projectName || "N/A"}</td>
+                          <td className="p-2 border-r border-slate-800/10 whitespace-nowrap">{lead.source}</td>
+                          <td className="p-2 border-r border-slate-800/10 font-semibold text-teal-400 whitespace-nowrap">{lead.assignedAgent}</td>
+                          <td className="p-2 border-r border-slate-800/10 whitespace-nowrap">{lead.location}</td>
+                          <td className="p-2 border-r border-slate-800/10 font-mono tracking-tight text-amber-500 font-semibold whitespace-nowrap">{lead.budget}</td>
+                          <td className="p-2 whitespace-nowrap">
+                            <span className="px-1.5 py-0.2 rounded-md bg-teal-500/10 text-teal-400 border border-teal-500/20 text-[8px] font-mono tracking-wider font-semibold">
+                              {lead.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Action controls */}
+            <div className="flex gap-2.5 justify-end pt-4 mt-4 border-t border-slate-100/10">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setImportPreviewData([]);
+                  setFileName("");
+                  setImportError(null);
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer transition
+                  ${darkMode ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-white" : "bg-slate-100 hover:bg-slate-150 border-slate-205 text-slate-805"}`}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                disabled={importPreviewData.length === 0}
+                onClick={handleCommitImport}
+                className={`px-5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition
+                  ${importPreviewData.length > 0 
+                    ? "bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer active:scale-95" 
+                    : "bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed"}`}
+              >
+                <Check size={14} />
+                Register {importPreviewData.length > 0 ? `${importPreviewData.length} Parsed Leads` : "Spreadsheet"}
+              </button>
+            </div>
           </div>
         </div>
       )}

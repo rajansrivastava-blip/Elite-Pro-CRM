@@ -3,14 +3,62 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
+
+// Initialize backend Supabase Client, auto-correcting any misplaced/swapped keys from environment secrets
+let SUPABASE_URL = (process.env.VITE_SUPABASE_URL || "https://fzsjeukjjjutiihhzjgu.supabase.co").trim();
+let SUPABASE_ANON_KEY = (process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_PTNuV0AtVvNGIUKk9P6nIA_DcgGCrk1").trim();
+
+// Swapped configuration recovery: If key got parsed as URL by mistake, reset URL to target cluster
+if (SUPABASE_URL.startsWith("sb_publishable_") || SUPABASE_URL.startsWith("sb_secret_")) {
+  SUPABASE_URL = "https://fzsjeukjjjutiihhzjgu.supabase.co";
+}
+
+let formattedUrl = SUPABASE_URL;
+if (formattedUrl.endsWith("/rest/v1/")) {
+  formattedUrl = formattedUrl.substring(0, formattedUrl.length - "/rest/v1/".length);
+} else if (formattedUrl.endsWith("/rest/v1")) {
+  formattedUrl = formattedUrl.substring(0, formattedUrl.length - "/rest/v1".length);
+}
+if (formattedUrl.endsWith("/")) {
+  formattedUrl = formattedUrl.substring(0, formattedUrl.length - 1);
+}
+if (!formattedUrl || typeof formattedUrl !== "string" || !formattedUrl.startsWith("http")) {
+  formattedUrl = "https://fzsjeukjjjutiihhzjgu.supabase.co";
+}
+
+// Create a robust server client config. We pass auth setup and override/strip origin-headers
+// in case client's browser context gets forwarded, preventing the Supabase Edge Gateway
+// from misidentifying our Node server as a web browser.
+const supabase = createClient(formattedUrl, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    detectSessionInUrl: false
+  },
+  global: {
+    fetch: (url, options) => {
+      const headers = new Headers(options?.headers);
+      headers.delete("origin");
+      headers.delete("referer");
+      headers.delete("sec-fetch-mode");
+      headers.delete("sec-fetch-site");
+      headers.delete("sec-fetch-dest");
+      return fetch(url, {
+        ...options,
+        headers
+      });
+    }
+  }
+});
 
 const app = express();
 const PORT = 3000;
 
-// Parse request bodies
-app.use(express.json());
+// Parse request bodies with higher limit for bulk data syncs
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Helper to safely get the Gemini API client
 let aiInstance: GoogleGenAI | null = null;
@@ -48,7 +96,7 @@ app.post("/api/generate-followup", async (req, res) => {
 
     const ai = getGeminiClient();
     
-    const prompt = `You are a Senior Infrastructure Consultant and Client Relations Director for Elite Pro Infra (a premier commercial real estate and industrial infrastructure advisory firm).
+    const prompt = `You are a Senior Infrastructure Consultant and Client Relations Director for Elite Pro (a premier commercial real estate and industrial infrastructure advisory firm).
 Write a professional, personalized follow-up email to a prospective lead.
 
 Lead Profile:
@@ -60,8 +108,8 @@ Lead Profile:
 - Tone style requested: ${mood || "persuasive and authoritative"}
 
 Email Guidelines:
-- Write a professional subject line that is specific, elegant, and avoids spammy sales verbs. Use "Elite Pro Infra Proposal Integration" or customized to their interest.
-- Maintain a highly sophisticated elite, modern, advisory tone. We are Elite Pro Infra, not a standard transactional agency.
+- Write a professional subject line that is specific, elegant, and avoids spammy sales verbs. Use "Elite Pro Proposal Integration" or customized to their interest.
+- Maintain a highly sophisticated elite, modern, advisory tone. We are Elite Pro, not a standard transactional agency.
 - Reference their budget and the recent notes naturally.
 - Conclude with a clear, low-friction call-to-action (e.g., proposing an advisor consultation, site alignment tour, or brief presentation deck review).
 - No placeholders like [Host Name], [Date]. Use "Rajan Srivastava, Client Relations Director" as the signature.
@@ -71,7 +119,7 @@ Email Guidelines:
       model: "gemini-3.5-flash",
       contents: prompt,
       config: {
-        systemInstruction: "You represent Elite Pro Infra Client advisory. Ensure impeccable, polished business prose with clear spacing and paragraph divisions.",
+        systemInstruction: "You represent Elite Pro Client advisory. Ensure impeccable, polished business prose with clear spacing and paragraph divisions.",
         temperature: 0.7,
       }
     });
@@ -79,7 +127,7 @@ Email Guidelines:
     const generatedText = response.text || "";
     
     // Parse subject and body
-    let subject = "Elite Pro Infra Follow-Up | Architectural Advisory Alignment";
+    let subject = "Elite Pro Follow-Up | Architectural Advisory Alignment";
     let body = generatedText;
 
     const subjectMatch = generatedText.match(/(?:Subject|SUBJECT|Subject Line):\s*(.*)/i);
@@ -107,7 +155,7 @@ app.post("/api/generate-insights", async (req, res) => {
     
     const ai = getGeminiClient();
 
-    const prompt = `You are an executive strategic analyst at Elite Pro Infra. 
+    const prompt = `You are an executive strategic analyst at Elite Pro. 
 Based on our sales CRM statistics, write a formal Executive Performance & Stakeholder Forecast Report for the Board of Directors.
 
 Key Metrics Provided:
@@ -119,12 +167,12 @@ Key Metrics Provided:
 - Pipeline Breakdown: ${JSON.stringify(pipelineStageSummary || { New: 12, Contacted: 18, ConceptPlanning: 10, ProposalMade: 5, Won: 3 })}
 
 Generate a sophisticated high-level business brief containing the following sections:
-1. Executive Summary: High-level overview of Elite Pro Infra performance.
+1. Executive Summary: High-level overview of Elite Pro performance.
 2. Core Performance Highlights: Analytical reasoning of current numbers, noting our core real-estate advisory positioning.
 3. Strategic Growth Recommendations & Risks: Specific infrastructure-focused suggestions to optimize capital close times.
 4. Future Projections: Realistic outlook for the upcoming period.
 
-Draft this report as a beautiful structural presentation ready to put into formal documentation. Focus on executive clarity. Return your response in clean markdown format. Do not use generic placeholders. Signature is 'Executive Analytics Team | Elite Pro Infra'`;
+Draft this report as a beautiful structural presentation ready to put into formal documentation. Focus on executive clarity. Return your response in clean markdown format. Do not use generic placeholders. Signature is 'Executive Analytics Team | Elite Pro'`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3.5-flash",
@@ -142,6 +190,242 @@ Draft this report as a beautiful structural presentation ready to put into forma
       error: error.message || "Failed to compile executive analytics report. Please verify your GEMINI_API_KEY setting."
     });
   }
+});
+
+// ===================================
+// SUPABASE BACKEND PROXY ENDPOINTS
+// ===================================
+
+// Auth: SignUp
+app.post("/api/auth/signup", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required credentials." });
+    }
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    if (error) {
+      return res.status(error.status || 400).json({ error: error.message });
+    }
+    return res.json({ user: data.user, session: data.session });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "An unexpected sign up error occurred." });
+  }
+});
+
+// Auth: Login / SignIn
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required credentials." });
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      return res.status(error.status || 401).json({ error: error.message });
+    }
+    return res.json({ user: data.user, session: data.session });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "An unexpected login error occurred." });
+  }
+});
+
+// DB: Health / Ping / Schema Verification
+app.get("/api/db/status", async (req, res) => {
+  try {
+    const { error: testErr } = await supabase.from("users").select("count", { count: "exact", head: true });
+    
+    // Check if connected and can perform handshakes (suppress authorization fail specifically as erroring the whole connection)
+    const isConn = !testErr || (testErr.code !== "P0001");
+
+    const checkTable = async (tableName: string): Promise<boolean> => {
+      const { error } = await supabase.from(tableName).select("count", { count: "exact", head: true });
+      return !error || (error.code !== "42P01" && error.code !== "P0001");
+    };
+
+    const status = {
+      isConnected: isConn,
+      tablesVerified: {
+        users: isConn ? await checkTable("users") : false,
+        leads: isConn ? await checkTable("leads") : false,
+        appointments: isConn ? await checkTable("appointments") : false,
+        communication_logs: isConn ? await checkTable("communication_logs") : false,
+        lead_edit_logs: isConn ? await checkTable("lead_edit_logs") : false,
+      },
+      error: testErr ? `${testErr.message} (code: ${testErr.code || "N/A"})` : undefined
+    };
+    return res.json(status);
+  } catch (err: any) {
+    return res.status(500).json({
+      isConnected: false,
+      tablesVerified: {
+        users: false, leads: false, appointments: false, communication_logs: false, lead_edit_logs: false
+      },
+      error: err.message
+    });
+  }
+});
+
+// DB: Push Full Bundle (Manual sync or Seed push)
+app.post("/api/db/push", async (req, res) => {
+  try {
+    const { users, leads, appointments, communicationLogs, leadEditLogs } = req.body;
+    const errors: string[] = [];
+
+    if (users && users.length > 0) {
+      const { error } = await supabase.from("users").upsert(users);
+      if (error) errors.push(`Users push: ${error.message}`);
+    }
+    if (leads && leads.length > 0) {
+      const { error } = await supabase.from("leads").upsert(leads);
+      if (error) errors.push(`Leads push: ${error.message}`);
+    }
+    if (appointments && appointments.length > 0) {
+      const { error } = await supabase.from("appointments").upsert(appointments);
+      if (error) errors.push(`Appointments push: ${error.message}`);
+    }
+    if (communicationLogs && communicationLogs.length > 0) {
+      const { error } = await supabase.from("communication_logs").upsert(communicationLogs);
+      if (error) errors.push(`Comm logs push: ${error.message}`);
+    }
+    if (leadEditLogs && leadEditLogs.length > 0) {
+      const { error } = await supabase.from("lead_edit_logs").upsert(leadEditLogs);
+      if (error) errors.push(`Edit logs push: ${error.message}`);
+    }
+
+    return res.json({
+      success: errors.length === 0,
+      errors
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, errors: [err.message || String(err)] });
+  }
+});
+
+// DB: Pull Full Bundle (Full pull)
+app.get("/api/db/pull", async (req, res) => {
+  const errors: string[] = [];
+  let users: any[] | null = null;
+  let leads: any[] | null = null;
+  let appointments: any[] | null = null;
+  let communicationLogs: any[] | null = null;
+  let leadEditLogs: any[] | null = null;
+
+  try {
+    const { data, error } = await supabase.from("users").select("*");
+    if (error) errors.push(`Users: ${error.message}`);
+    else users = data || [];
+  } catch (e: any) { errors.push(`Users pull error: ${e.message}`); }
+
+  try {
+    const { data, error } = await supabase.from("leads").select("*");
+    if (error) errors.push(`Leads: ${error.message}`);
+    else leads = data || [];
+  } catch (e: any) { errors.push(`Leads pull error: ${e.message}`); }
+
+  try {
+    const { data, error } = await supabase.from("appointments").select("*");
+    if (error) errors.push(`Appointments: ${error.message}`);
+    else appointments = data || [];
+  } catch (e: any) { errors.push(`Appointments pull error: ${e.message}`); }
+
+  try {
+    const { data, error } = await supabase.from("communication_logs").select("*");
+    if (error) errors.push(`Comm Logs: ${error.message}`);
+    else communicationLogs = data || [];
+  } catch (e: any) { errors.push(`Comm logs pull error: ${e.message}`); }
+
+  try {
+    const { data, error } = await supabase.from("lead_edit_logs").select("*");
+    if (error) errors.push(`Lead Edit Logs: ${error.message}`);
+    else leadEditLogs = data || [];
+  } catch (e: any) { errors.push(`Lead edit logs pull error: ${e.message}`); }
+
+  return res.json({
+    users,
+    leads,
+    appointments,
+    communicationLogs,
+    leadEditLogs,
+    errors
+  });
+});
+
+// DB: Upsert/Delete Individual Record Proxies
+app.post("/api/db/upsert-user", async (req, res) => {
+  try {
+    const { error } = await supabase.from("users").upsert(req.body);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/get-user", async (req, res) => {
+  try {
+    const { id } = req.body;
+    const { data, error } = await supabase.from("users").select("*").eq("id", id).maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ user: data });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/delete-user", async (req, res) => {
+  try {
+    const { id } = req.body;
+    const { error } = await supabase.from("users").delete().eq("id", id);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/upsert-lead", async (req, res) => {
+  try {
+    const { error } = await supabase.from("leads").upsert(req.body);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/delete-lead", async (req, res) => {
+  try {
+    const { id } = req.body;
+    const { error } = await supabase.from("leads").delete().eq("id", id);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/upsert-appointment", async (req, res) => {
+  try {
+    const { error } = await supabase.from("appointments").upsert(req.body);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/delete-appointment", async (req, res) => {
+  try {
+    const { id } = req.body;
+    const { error } = await supabase.from("appointments").delete().eq("id", id);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/upsert-communication-log", async (req, res) => {
+  try {
+    const { error } = await supabase.from("communication_logs").upsert(req.body);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/upsert-lead-edit-log", async (req, res) => {
+  try {
+    const { error } = await supabase.from("lead_edit_logs").upsert(req.body);
+    if (error) return res.status(400).json({ error: error.message });
+    return res.json({ success: true });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
 
 // Serve frontend assets

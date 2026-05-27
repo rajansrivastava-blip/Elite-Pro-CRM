@@ -170,7 +170,7 @@ export default function AppointmentsList({
         <button
           id="create-appt-modal-btn"
           onClick={() => setIsAddModalOpen(true)}
-          className="px-4.5 py-2.5 rounded-xl bg-teal-650 hover:bg-teal-600 text-white font-medium text-xs transition flex items-center gap-2 cursor-pointer shadow-md shadow-teal-500/5 select-none"
+          className="px-4.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-medium text-xs transition flex items-center gap-2 cursor-pointer shadow-md shadow-teal-500/5 select-none"
         >
           <Plus size={15} />
           Schedule Advisory Session
@@ -379,7 +379,7 @@ export default function AppointmentsList({
           >
             <button 
               onClick={() => setIsAddModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-450 hover:text-white"
+              className="absolute top-4 right-4 text-slate-450 dark:hover:text-white hover:text-slate-800 transition-colors"
             >
               <X size={20} />
             </button>
@@ -518,7 +518,7 @@ export default function AppointmentsList({
           >
             <button 
               onClick={() => setEditingApp(null)}
-              className="absolute top-4 right-4 text-slate-450 hover:text-white"
+              className="absolute top-4 right-4 text-slate-450 dark:hover:text-white hover:text-slate-800 transition-colors"
             >
               <X size={20} />
             </button>

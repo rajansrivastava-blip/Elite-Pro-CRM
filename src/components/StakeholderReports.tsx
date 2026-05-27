@@ -105,10 +105,10 @@ export default function StakeholderReports({
       // Perfect consultant layout fallback
       setReportMarkdown(`
 # Executive Board Report | Q2 2026 Strategy Forecast
-**Prepared by Executive Analytics Team & Rajan Srivastava**
+**Prepared by Executive Analytics Team & Viren Mehta**
 
 ## 1. Executive Summary
-Elite Pro Infra holds an unparalleled leading advisory position in commercial real-estate expansion. This quarter, our strategic pivot to sustainable logistics structures resulted in **${reportValue}** in active pipeline capital allocation, with a lead registry size of **${reportLeads}** qualified leads.
+Elite Pro holds an unparalleled leading advisory position in commercial real-estate expansion. This quarter, our strategic pivot to sustainable logistics structures resulted in **${reportValue}** in active pipeline capital allocation, with a lead registry size of **${reportLeads}** qualified leads.
 
 ## 2. Core Performance Highlights
 *   **Active Pipeline Asset Valuation**: ${reportValue}
@@ -143,7 +143,7 @@ Recent deals show clients prioritizing zero-carbon configurations, cold storage 
       {/* Intro section */}
       <div className={`p-6 rounded-2xl border transition-all ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-100 shadow-sm"}`}>
         <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-teal-605 text-white">
+          <div className="p-2.5 rounded-xl bg-teal-600 text-white">
             <FilePieChart size={22} />
           </div>
           <div>
@@ -248,7 +248,7 @@ Recent deals show clients prioritizing zero-carbon configurations, cold storage 
               id="compile-analytical-report-btn"
               onClick={triggerCompileReport}
               disabled={isCompiling}
-              className="w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-550 text-white font-semibold text-xs tracking-wide uppercase transition duration-150 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 select-none shadow-md shadow-teal-500/10"
+              className="w-full py-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs tracking-wide uppercase transition duration-150 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 select-none shadow-md shadow-teal-500/10"
             >
               {isCompiling ? (
                 <>
@@ -292,7 +292,7 @@ Recent deals show clients prioritizing zero-carbon configurations, cold storage 
                 <button
                   id="report-export-btn"
                   onClick={handleExportToBoard}
-                  className="px-2.5 py-1.5 rounded-lg bg-teal-605 text-white font-medium text-xs flex items-center gap-1.5 cursor-pointer hover:bg-teal-550 transition"
+                  className="px-2.5 py-1.5 rounded-lg bg-teal-600 text-white font-medium text-xs flex items-center gap-1.5 cursor-pointer hover:bg-teal-700 transition"
                 >
                   <Share2 size={13} />
                   Export to Board

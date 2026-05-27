@@ -1,4 +1,5 @@
 import React from "react";
+import { compressAndResizeImage } from "../utils";
 import { 
   Building2, 
   Users, 
@@ -11,9 +12,12 @@ import {
   LogOut,
   Sun, 
   Moon,
-  UserCheck
+  UserCheck,
+  Camera,
+  X
 } from "lucide-react";
 import { User } from "../types";
+import EliteProLogo from "./EliteProLogo";
 
 interface SidebarProps {
   currentTab: string;
@@ -25,6 +29,9 @@ interface SidebarProps {
   isMobileModeActive: boolean;
   currentUser: User | null;
   onLogout: () => void;
+  onUpdateUserAvatar: (avatarUrl: string) => void;
+  isOpen?: boolean;
+  onClose?: () => void;
 }
 
 export default function Sidebar({
@@ -36,9 +43,32 @@ export default function Sidebar({
   onTriggerSync,
   isMobileModeActive,
   currentUser,
-  onLogout
+  onLogout,
+  onUpdateUserAvatar,
+  isOpen = false,
+  onClose
 }: SidebarProps) {
   
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  const handleAvatarClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      try {
+        const compressedBase = await compressAndResizeImage(file, 120, 120, 0.85);
+        onUpdateUserAvatar(compressedBase);
+      } catch (err) {
+        console.error("Failed to compress and resize sidebar avatar upload:", err);
+      }
+    }
+  };
+
   const menuItems = [
     { id: "dashboard", label: "Executive Dashboard", icon: LayoutDashboard },
     { id: "leads", label: "Lead Pipeline", icon: Users },
@@ -53,31 +83,37 @@ export default function Sidebar({
     if (currentUser?.role === 'sales_team') {
       return tabId === "reports" || tabId === "integrations" || tabId === "users";
     }
+    if (currentUser?.role === 'team_leader') {
+      return tabId === "integrations";
+    }
     return false;
   };
 
   return (
     <aside 
       id="crm-sidebar"
-      className={`fixed top-0 left-0 h-full w-64 z-20 transition-all duration-300 border-r flex flex-col justify-between
+      className={`fixed top-0 left-0 h-full w-64 z-50 transition-transform duration-300 border-r flex flex-col justify-between
+        ${isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
         ${darkMode 
           ? "bg-slate-900 border-slate-800 text-slate-100" 
           : "bg-white border-slate-250 text-slate-800"}`}
     >
       <div>
         {/* Brand Header */}
-        <div className={`p-6 border-b flex items-center gap-3 ${darkMode ? "border-slate-800" : "border-slate-100"}`}>
-          <div className="p-2.5 rounded-xl bg-teal-600 text-white shadow-md shadow-teal-600/10">
-            <Building2 size={24} className="stroke-[1.75]" />
+        <div className={`p-5 pb-6 border-b flex items-center justify-between ${darkMode ? "border-slate-800 bg-slate-950/20" : "border-slate-150 bg-slate-100/10"}`}>
+          <div className="flex-1 flex justify-center">
+            <EliteProLogo scale={1.05} />
           </div>
-          <div>
-            <h1 className="font-display font-bold text-lg leading-tight tracking-tight">
-              Elite Pro
-            </h1>
-            <span className="text-xs font-mono font-medium tracking-wider text-teal-500 uppercase">
-              Infrastructure
-            </span>
-          </div>
+          {onClose && (
+            <button
+              id="sidebar-close-btn"
+              onClick={onClose}
+              className={`p-1.5 rounded-lg md:hidden hover:bg-opacity-85 transition active:scale-95 text-slate-400 hover:text-rose-500`}
+              title="Close Menu"
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
 
         {/* Sync Status Banner */}
@@ -118,7 +154,10 @@ export default function Sidebar({
               <button
                 key={item.id}
                 id={`sidebar-tab-${item.id}`}
-                onClick={() => onChangeTab(item.id)}
+                onClick={() => {
+                  onChangeTab(item.id);
+                  if (onClose) onClose();
+                }}
                 className={`w-full flex items-center gap-3.5 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 group cursor-pointer
                   ${isActive 
                     ? "bg-teal-600 text-white shadow-sm" 
@@ -132,7 +171,9 @@ export default function Sidebar({
                     ${isActive ? "text-white" : "text-slate-400 group-hover:text-slate-500"}`} 
                 />
                 
-                <span className="flex-1 text-left truncate">{item.label}</span>
+                <span className="flex-1 text-left truncate">
+                  {item.id === "users" && currentUser?.role === "team_leader" ? "My Sales Team" : item.label}
+                </span>
                 
                 {isLocked && (
                   <span className="text-slate-500/70 dark:text-slate-500/80" title="Super Admin or Admin credentials required">
@@ -154,15 +195,30 @@ export default function Sidebar({
         {/* User Info */}
         {currentUser && (
           <div className="flex items-center gap-3 p-1 rounded-xl">
-            <div className="relative">
+            <div 
+              className="relative group cursor-pointer" 
+              onClick={handleAvatarClick}
+              title="Click to change profile portrait"
+            >
               <img
                 src={currentUser.avatarUrl}
                 alt={currentUser.name}
-                className="w-10 h-10 rounded-xl object-cover border border-teal-500/20 shadow-sm skeleton"
+                className="w-10 h-10 rounded-xl object-cover border border-teal-500/20 shadow-sm skeleton transition group-hover:brightness-75"
                 referrerPolicy="no-referrer"
               />
+              <div className="absolute inset-0 bg-black/45 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
+                <Camera size={12} className="text-teal-400" />
+              </div>
               <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900"></span>
             </div>
+            
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleFileChange} 
+              accept="image/*" 
+              className="hidden" 
+            />
             
             <div className="overflow-hidden flex-1 text-left">
               <p className="text-xs font-bold leading-tight truncate">{currentUser.name}</p>

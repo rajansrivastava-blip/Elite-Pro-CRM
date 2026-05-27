@@ -1,4 +1,4 @@
-export type UserRole = 'super_admin' | 'admin' | 'sales_team';
+export type UserRole = 'super_admin' | 'admin' | 'sales_team' | 'team_leader';
 
 export interface User {
   id: string;
@@ -8,6 +8,8 @@ export interface User {
   avatarUrl?: string;
   department: string;
   password?: string;
+  teamLeaderId?: string; // ID of the team leader
+  active?: boolean;
 }
 
 export type LeadSource = 
@@ -48,6 +50,7 @@ export interface Lead {
   location: string;
   assignedAgent: string; // Assign To
   notes: string;
+  projectName?: string; // Optional Project Name
   dateCreated: string;
   dateUpdated: string;
   lastCommunication: string;

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Lead, CommunicationLog } from "../types";
+import { Lead, CommunicationLog, User } from "../types";
 import { 
   Smartphone, 
   MapPin, 
@@ -8,7 +8,7 @@ import {
   Send, 
   Building2, 
   Briefcase, 
-  User, 
+  User as UserIcon, 
   Map, 
   Phone, 
   Mail, 
@@ -25,6 +25,7 @@ interface MobileCompanionProps {
   onAddCommunicationLog: (log: Omit<CommunicationLog, "id">) => void;
   onTriggerSync: () => void;
   darkMode: boolean;
+  currentUser?: User | null;
 }
 
 export default function MobileCompanion({
@@ -32,7 +33,8 @@ export default function MobileCompanion({
   onUpdateLead,
   onAddCommunicationLog,
   onTriggerSync,
-  darkMode
+  darkMode,
+  currentUser
 }: MobileCompanionProps) {
   
   // Choose lead to update
@@ -46,17 +48,23 @@ export default function MobileCompanion({
   const [isMobileConnecting, setIsMobileConnecting] = useState(false);
 
   // Status stage choices on mobile
-  const [mobileStatus, setMobileStatus] = useState<Lead["status"]>("negotiating");
+  const [mobileStatus, setMobileStatus] = useState<Lead["status"]>(() => {
+    return leads[0]?.status || "Interested";
+  });
+
+  // Keep mobileStatus in sync with selected lead or external updates
+  React.useEffect(() => {
+    const found = leads.find(l => l.id === selectedLeadId);
+    if (found) {
+      setMobileStatus(found.status);
+    }
+  }, [selectedLeadId, leads]);
 
   // Handle select change - pull lead details and lock initial status choice
   const handleLeadChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value;
     setSelectedLeadId(id);
-    const found = leads.find(l => l.id === id);
-    if (found) {
-      setMobileStatus(found.status);
-      setSynopsisNote("");
-    }
+    setSynopsisNote("");
   };
 
   // Check In site coordination action
@@ -70,7 +78,7 @@ export default function MobileCompanion({
         date: new Date().toISOString().split("T")[0],
         type: "site_visit",
         content: `[MOBILE COMPANION CHECK-IN] Representative arrived physically at target site coordinate boundary in "${selectedLead.location}". Client coordination loop refreshed.`,
-        sender: "Rajan Srivastava"
+        sender: currentUser?.name || "Viren Mehta"
       });
 
       // Update Lead dateUpdated
@@ -116,7 +124,7 @@ export default function MobileCompanion({
         date: new Date().toISOString().split("T")[0],
         type: "call",
         content: `[MOBILE APP SUBMISSION] Status updated to "${mobileStatus}". Synopsis summary: ${synopsisNote || "(No text synopsis recorded)"}`,
-        sender: "Rajan Srivastava (Field Link)"
+        sender: `${currentUser?.name || "Viren Mehta"} (Field Link)`
       });
 
       setIsMobileConnecting(false);
@@ -142,7 +150,7 @@ export default function MobileCompanion({
             </div>
             <div>
               <h3 className={`font-display font-semibold text-lg ${darkMode ? "text-white" : "text-slate-905"}`}>
-                Elite Pro Infrastructure Field Companion Simulator
+                Elite Pro Field Companion Simulator
               </h3>
               <p className="text-xs text-slate-400 mt-1 max-w-xl">
                 Mock smartphone system highlighting high-fidelity mobile workspace sync for on-site advisors updating database records in real-time.
@@ -187,8 +195,8 @@ export default function MobileCompanion({
 
                 <div className="mt-3 text-left">
                   <span className="text-[9px] uppercase tracking-wider font-semibold opacity-65 font-mono">Representative Context</span>
-                  <h4 className="font-display font-semibold text-sm text-teal-400">Rajan Srivastava</h4>
-                  <p className="opacity-50 text-[10px] mt-0.5">Gurugram Corridor Client alignment loop</p>
+                  <h4 className="font-display font-semibold text-sm text-teal-400">{currentUser?.name || "Viren Mehta"}</h4>
+                  <p className="opacity-50 text-[10px] mt-0.5">{currentUser?.department || "Executive Board"} Client alignment loop</p>
                 </div>
 
                 {/* Form Selection */}
@@ -201,7 +209,7 @@ export default function MobileCompanion({
                     className="w-full bg-slate-950 border border-slate-800 text-slate-200 px-2 py-1.5 rounded text-[11px] appearance-auto cursor-pointer focus:outline-none"
                   >
                     {leads.map(l => (
-                      <option key={l.id} value={l.id}>{l.name} ({l.company})</option>
+                      <option key={l.id} value={l.id}>{l.name} {l.projectName ? `[Proj: ${l.projectName}]` : l.company ? `(${l.company})` : ""}</option>
                     ))}
                   </select>
                 </div>
@@ -215,7 +223,9 @@ export default function MobileCompanion({
                     <div className="p-3 bg-slate-900 border border-white/5 rounded-xl space-y-2">
                       <div className="flex justify-between items-start">
                         <div>
-                          <span className="text-[8px] font-mono text-slate-400 uppercase tracking-widest">Lead Source Route</span>
+                          <span className="text-[8px] font-mono text-slate-400 uppercase tracking-widest">
+                            {selectedLead.projectName ? `Project: ${selectedLead.projectName}` : "Lead Source Route"}
+                          </span>
                           <h5 className="font-semibold text-teal-400 text-xs truncate max-w-[170px]">{selectedLead.source}</h5>
                         </div>
                         <span className="px-1.5 py-0.5 bg-orange-500/10 text-orange-400 rounded-md font-mono text-[8px] font-bold uppercase tracking-wider">
@@ -280,11 +290,13 @@ export default function MobileCompanion({
                           onChange={(e) => setMobileStatus(e.target.value as Lead["status"])}
                           className="w-full bg-slate-950 border border-slate-800 text-slate-200 px-2 py-1.5 rounded text-[10px] focus:outline-none"
                         >
-                          <option value="new">🆕 New Lead</option>
-                          <option value="contacted">📞 Contacted</option>
-                          <option value="negotiating">🤝 Negotiating</option>
-                          <option value="won">🎉 Closed Deals Won</option>
-                          <option value="lost">❌ Decommissioned</option>
+                          <option value="Interested">🆕 Interested</option>
+                          <option value="Follow Up">📞 Follow Up</option>
+                          <option value="Detailed Share">🤝 Detailed Share</option>
+                          <option value="Meeting Done">🎉 Meeting Done</option>
+                          <option value="Site Visit">🏗️ Site Visit</option>
+                          <option value="Call Back">🔄 Call Back</option>
+                          <option value="Not Interested">❌ Not Interested</option>
                         </select>
                       </div>
 
@@ -330,7 +342,7 @@ export default function MobileCompanion({
               {/* Bottom Home indicator strip */}
               <div className="pt-2 border-t border-white/5 flex flex-col items-center">
                 <div className="w-24 h-1 bg-slate-700 rounded-full bg-opacity-70"></div>
-                <span className="text-[7px] font-mono text-slate-600 uppercase tracking-widest mt-1.5">Elite Pro Infra Mobilization Suite</span>
+                <span className="text-[7px] font-mono text-slate-600 uppercase tracking-widest mt-1.5">Elite Pro Mobilization Suite</span>
               </div>
 
             </div>
