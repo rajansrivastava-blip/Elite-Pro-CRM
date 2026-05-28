@@ -858,6 +858,22 @@ export default function UserManagement({
                     />
                   </div>
 
+                  {(isSuperAdmin || isAdmin) && (
+                    <div>
+                      <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5 font-semibold text-teal-500 dark:text-teal-400">Sign-in Password (Admin Override)</label>
+                      <input
+                        id="edit-user-password"
+                        type="text"
+                        required
+                        value={editingUser.password || ""}
+                        onChange={(e) => setEditingUser({ ...editingUser, password: e.target.value })}
+                        className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono font-bold
+                          ${darkMode ? "bg-slate-950 border-slate-805 text-white" : "bg-slate-50 border-slate-200 text-slate-900"}`}
+                        placeholder="e.g. sales123"
+                      />
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">User Position Role</label>

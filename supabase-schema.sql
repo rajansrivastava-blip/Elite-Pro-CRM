@@ -97,6 +97,8 @@ CREATE TABLE IF NOT EXISTS public.lead_edit_logs (
 -- To allow instant read/write transactions directly from your React client
 -- during testing, run these commands to bypass RLS.
 -- --------------------------------------------------------------------
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password TEXT;
+
 ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.leads DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.appointments DISABLE ROW LEVEL SECURITY;

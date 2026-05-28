@@ -2,36 +2,66 @@ import React from "react";
 
 interface EliteProLogoProps {
   className?: string;
-  inverseColors?: boolean; // useful if we want to tweak behavior
   scale?: number;
 }
 
 export default function EliteProLogo({ className = "", scale = 1 }: EliteProLogoProps) {
-  // Let's create an elegant gold-and-black corporate logo matching the user's uploaded asset.
   return (
-    <div className={`flex flex-col items-center select-none ${className}`} style={{ transform: `scale(${scale})`, transformOrigin: "center" }}>
+    <div 
+      className={`flex flex-col items-center select-none ${className}`} 
+      style={{ transform: `scale(${scale})`, transformOrigin: "center" }}
+    >
       {/* Outer Rectangle with Gold Border */}
-      <div className="border border-amber-500/95 bg-black rounded-sm flex items-stretch divide-x divide-amber-500/95 overflow-hidden shadow-md shadow-black/35">
-        
+      <div 
+        className="w-[210px] h-[58px] bg-black border-2 border-[#b38728] overflow-hidden shadow-2xl flex items-stretch"
+      >
         {/* Left Half: Metallic Gold Gradient with Black text */}
-        <div className="bg-gradient-to-r from-[#b38728] via-[#ffd700] to-[#b38728] px-4 py-1 flex items-center justify-center">
-          <span className="font-display font-black tracking-widest text-slate-950 text-xs sm:text-sm">
+        <div 
+          className="flex-1 flex items-center justify-center px-2"
+          style={{
+            background: "linear-gradient(135deg, #BF953F 0%, #FCF6BA 25%, #B38728 50%, #FBF5B7 75%, #AA771C 100%)",
+          }}
+        >
+          <span 
+            className="text-black uppercase tracking-[0.05em] select-none"
+            style={{
+              fontFamily: 'Georgia, Cambria, "Times New Roman", Times, serif',
+              fontSize: "25px",
+              fontWeight: 900,
+              lineHeight: "1.0",
+            }}
+          >
             ELITE
           </span>
         </div>
 
+        {/* Middle Divider: pure gold */}
+        <div className="w-[2px] bg-[#b38728]" />
+
         {/* Right Half: Black background with White text */}
-        <div className="bg-slate-950 px-4 py-1 flex items-center justify-center">
-          <span className="font-display font-black tracking-widest text-white text-xs sm:text-sm">
+        <div className="flex-1 bg-black flex items-center justify-center px-1">
+          <span 
+            className="text-white uppercase tracking-[0.02em] select-none"
+            style={{
+              fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+              fontSize: "27px",
+              fontWeight: 900,
+              lineHeight: "1.0",
+            }}
+          >
             PRO
           </span>
         </div>
-
       </div>
 
-      {/* Subtitle: TRUSTED FOR TRANSPARENCY centered below */}
-      <div className="mt-1 flex items-center justify-center">
-        <span className="text-[7.5px] sm:text-[8.5px] font-mono tracking-[0.2em] uppercase font-bold text-slate-300 dark:text-slate-300">
+      {/* Slogan Subtitle: TRUSTED FOR TRANSPARENCY centered below */}
+      <div className="mt-1.5 text-center">
+        <span 
+          className="text-white text-[8px] uppercase font-bold tracking-[0.22em] block"
+          style={{
+            fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+          }}
+        >
           TRUSTED FOR TRANSPARENCY
         </span>
       </div>

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   RefreshCw, 
   Settings, 
@@ -24,9 +24,19 @@ import {
   Archive,
   Shield,
   Clock,
-  Trash
+  Trash,
+  FileSpreadsheet
 } from "lucide-react";
 import { SupabaseStatus } from "../supabase";
+import { 
+  googleSheetsSignIn, 
+  googleSheetsSignOut, 
+  getCachedGoogleToken, 
+  fetchGoogleSheetValues, 
+  mapSpreadsheetRowsToLeads,
+  initGoogleAuth,
+  extractSpreadsheetId 
+} from "../googleAuth";
 
 interface SystemSyncProps {
   darkMode: boolean;
@@ -49,6 +59,19 @@ interface SystemSyncProps {
   appointments?: any[];
   communicationLogs?: any[];
   leadEditLogs?: any[];
+
+  // Google Sheets callback prop
+  onBulkAddLeads?: (newLeads: any[]) => Promise<void>;
+
+  // Hoisted Google Sheets configuration states
+  sheetUrl: string;
+  setSheetUrl: React.Dispatch<React.SetStateAction<string>>;
+  sheetRange: string;
+  setSheetRange: React.Dispatch<React.SetStateAction<string>>;
+  autoSheetsSync: boolean;
+  setAutoSheetsSync: React.Dispatch<React.SetStateAction<boolean>>;
+  lastSheetsSynced: string;
+  setLastSheetsSynced: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export default function SystemSync({
@@ -67,11 +90,145 @@ export default function SystemSync({
   leads = [],
   appointments = [],
   communicationLogs = [],
-  leadEditLogs = []
+  leadEditLogs = [],
+  onBulkAddLeads,
+  sheetUrl,
+  setSheetUrl,
+  sheetRange,
+  setSheetRange,
+  autoSheetsSync,
+  setAutoSheetsSync,
+  lastSheetsSynced,
+  setLastSheetsSynced
 }: SystemSyncProps) {
   
   // Status check state
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(true);
+  
+  // Google Sheets state variables
+  const [googleUser, setGoogleUser] = useState<any>(null);
+  const [googleToken, setGoogleToken] = useState<string | null>(() => getCachedGoogleToken());
+  const [isSheetsSyncing, setIsSheetsSyncing] = useState(false);
+  const [sheetsFeedback, setSheetsFeedback] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+
+  // Handle Firebase Auth listener for Google authentication
+  useEffect(() => {
+    const unsubscribe = initGoogleAuth(
+      (user, token) => {
+        setGoogleUser(user);
+        setGoogleToken(token);
+      },
+      () => {
+        setGoogleUser(null);
+        setGoogleToken(getCachedGoogleToken());
+      }
+    );
+    return () => unsubscribe();
+  }, []);
+
+  const handleGoogleSheetsSignIn = async () => {
+    try {
+      setSheetsFeedback(null);
+      const res = await googleSheetsSignIn();
+      if (res) {
+        setGoogleUser(res.user);
+        setGoogleToken(res.accessToken);
+        setSheetsFeedback({ message: "Successfully connected to Google account!", type: "success" });
+      }
+    } catch (err: any) {
+      setSheetsFeedback({ message: `Authorization failed: ${err.message || String(err)}`, type: "error" });
+    }
+  };
+
+  const handleGoogleSheetsSignOut = async () => {
+    try {
+      setSheetsFeedback(null);
+      await googleSheetsSignOut();
+      setGoogleUser(null);
+      setGoogleToken(null);
+      setSheetsFeedback({ message: "Disconnected Google Account session.", type: "info" });
+    } catch (err: any) {
+      setSheetsFeedback({ message: `Disconnect failed: ${err.message || String(err)}`, type: "error" });
+    }
+  };
+
+  // Dedicated execution handler: Fetch and sync Google Sheet leads
+  const executeGoogleSheetsSync = async () => {
+    if (!sheetUrl) {
+      setSheetsFeedback({ message: "Please specify a Spreadsheet URL or Spreadsheet ID first.", type: "error" });
+      return;
+    }
+    const tokenToUse = googleToken || getCachedGoogleToken() || undefined;
+
+    setIsSheetsSyncing(true);
+    setSheetsFeedback(null);
+
+    try {
+      // 1. Fetch values
+      const rows = await fetchGoogleSheetValues(sheetUrl, sheetRange || "Sheet1", tokenToUse);
+      if (!rows || rows.length < 2) {
+        setSheetsFeedback({ 
+          message: "Zero or insufficient records found. Make sure the first row contains headers (e.g., Name, Email, Phone) and subsequent rows contain leads data.", 
+          type: "error" 
+        });
+        setIsSheetsSyncing(false);
+        return;
+      }
+
+      // 2. Parse values
+      const parsedLeads = mapSpreadsheetRowsToLeads(rows);
+      if (parsedLeads.length === 0) {
+        setSheetsFeedback({ 
+          message: "No valid leads could be parsed. Check that your spreadsheet contains a 'Name' column with non-empty rows.", 
+          type: "error" 
+        });
+        setIsSheetsSyncing(false);
+        return;
+      }
+
+      // 3. Prevent Duplicates with existing leads
+      const existingLeadsSet = new Set(
+        leads.map(l => {
+          const name = (l.name || "").toLowerCase().trim();
+          const email = (l.email || "").toLowerCase().trim();
+          return email ? `${name}::${email}` : name;
+        })
+      );
+
+      const filteredNewLeads = parsedLeads.filter(nl => {
+        const name = (nl.name || "").toLowerCase().trim();
+        const email = (nl.email || "").toLowerCase().trim();
+        const key = email ? `${name}::${email}` : name;
+        return !existingLeadsSet.has(key);
+      });
+
+      // 4. Register new leads
+      if (filteredNewLeads.length > 0) {
+        if (onBulkAddLeads) {
+          await onBulkAddLeads(filteredNewLeads);
+        }
+      }
+
+      const updatedTime = new Date().toLocaleTimeString("en-US", { hour12: true }) + " (Local)";
+      setLastSheetsSynced(updatedTime);
+      localStorage.setItem("google_sheets_last_sync_time", updatedTime);
+
+      setSheetsFeedback({
+        message: `Sync Completed successfully: Analyzed ${rows.length - 1} records from sheet. Ingested ${filteredNewLeads.length} new leads into CRM (skipped ${parsedLeads.length - filteredNewLeads.length} duplicates). All ingested leads are automatically assigned to "Admin".`,
+        type: "success"
+      });
+
+    } catch (err: any) {
+      console.error(err);
+      setSheetsFeedback({ 
+        message: `Google Sheets Sync failed: ${err.message || String(err)} (Verify that your Spreadsheet URL / Sheet Range are correct and public/shared, or check Google token validity).`, 
+        type: "error" 
+      });
+    } finally {
+      setIsSheetsSyncing(false);
+    }
+  };
+
   const [showConfigAlert, setShowConfigAlert] = useState(false);
   const [copiedSql, setCopiedSql] = useState(false);
   const [opFeedback, setOpFeedback] = useState<{ message: string; type: "success" | "error" } | null>(null);
@@ -303,6 +460,9 @@ CREATE TABLE IF NOT EXISTS public.lead_edit_logs (
   changes JSONB NOT NULL
 );
 
+-- OPTIONAL: Migration for older existing users tables to ensure and add the password field
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password TEXT;
+
 -- OPTIONAL: Quick Testing Rule (Disables Row Level Security for instant connection)
 ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.leads DISABLE ROW LEVEL SECURITY;
@@ -418,7 +578,7 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
       )}
 
       {/* Grid of integrations cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         
         {/* Card 1: Google Calendar Domain Sync */}
         <div className={`p-5 rounded-2xl border transition-all relative overflow-hidden flex flex-col justify-between
@@ -605,6 +765,138 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             >
               Fetch Live Data
             </button>
+          </div>
+        </div>
+
+        {/* Card 3: Google Sheets Real-Time Ingestion */}
+        <div className={`p-5 rounded-2xl border transition-all relative overflow-hidden flex flex-col justify-between
+          ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-100 shadow-sm"}`}
+        >
+          <div>
+            <div className="flex justify-between items-start mb-4">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400">
+                <FileSpreadsheet size={20} />
+              </div>
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-wider uppercase
+                ${googleUser 
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                  : "bg-slate-800 text-slate-400"}`}
+              >
+                {googleUser ? "Connected" : "Disconnected"}
+              </span>
+            </div>
+
+            <h4 className="font-display font-bold text-base">Google Sheets Ingestion</h4>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+              Fetches records from connected Google Spreadsheets, processes contact structures, and transfers new leads directly to the CRM (fully auto-assigning to Admin).
+            </p>
+
+            {/* Inputs block */}
+            <div className="mt-4 pt-3 border-t border-slate-150/10 dark:border-slate-800/40 space-y-3">
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Spreadsheet URL or ID</label>
+                <input
+                  type="text"
+                  placeholder="Paste URL or ID"
+                  value={sheetUrl}
+                  onChange={(e) => setSheetUrl(e.target.value)}
+                  className={`w-full px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono
+                    ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-205 text-slate-900"}`}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Sheet Name / Range</label>
+                  <input
+                    type="text"
+                    placeholder="Sheet1"
+                    value={sheetRange}
+                    onChange={(e) => setSheetRange(e.target.value)}
+                    className={`w-full px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-205 text-slate-900"}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Auto Sheet Sync (60s)</label>
+                  <div className={`p-1.5 rounded-lg border flex items-center justify-between h-[34px]
+                    ${darkMode ? "bg-slate-950/45 border-slate-800/40" : "bg-slate-50 border-slate-200"}`}
+                  >
+                    <span className="text-[9px] text-slate-450 uppercase font-mono pl-1 font-semibold">
+                      {autoSheetsSync ? "ON" : "OFF"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setAutoSheetsSync(prev => !prev)}
+                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none
+                        ${autoSheetsSync ? "bg-teal-600" : "bg-slate-750"}`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+                          ${autoSheetsSync ? "translate-x-3" : "translate-x-0"}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 text-[10.5px] font-mono space-y-1.5 text-slate-400">
+                <div className="flex justify-between">
+                  <span>Last Checked Sync:</span>
+                  <span className="text-slate-350 font-semibold">{lastSheetsSynced}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Authorized Account:</span>
+                  <span className="text-slate-350 truncate max-w-[155px] font-semibold" title={googleUser?.email || "None"}>
+                    {googleUser?.email || "Unauthenticated"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-5 pt-3 border-t border-slate-105/5 space-y-3">
+            {sheetsFeedback && (
+              <div className={`p-2.5 rounded-lg text-[10.5px] font-semibold flex items-start gap-1.5 border leading-relaxed animate-fadeIn
+                ${sheetsFeedback.type === "success" 
+                  ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400" 
+                  : sheetsFeedback.type === "error"
+                  ? "bg-rose-500/10 border-rose-500/25 text-rose-400"
+                  : "bg-slate-500/15 border-slate-500/25 text-slate-300"}`}
+              >
+                {sheetsFeedback.type === "success" ? (
+                  <CheckCircle2 size={13} className="shrink-0 mt-0.5" />
+                ) : sheetsFeedback.type === "error" ? (
+                  <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+                ) : (
+                  <Info size={13} className="shrink-0 mt-0.5" />
+                )}
+                <div className="flex-1">{sheetsFeedback.message}</div>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={executeGoogleSheetsSync}
+                disabled={isSheetsSyncing}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white cursor-pointer active:scale-95 transition flex items-center justify-center gap-1.5 disabled:opacity-55 shadow-md shadow-teal-500/10`}
+              >
+                <RefreshCw size={12} className={isSheetsSyncing ? "animate-spin" : ""} />
+                {isSheetsSyncing ? "Syncing..." : "Sync & Ingest"}
+              </button>
+
+              <button
+                type="button"
+                onClick={googleUser ? handleGoogleSheetsSignOut : handleGoogleSheetsSignIn}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition border cursor-pointer select-none active:scale-95
+                  ${googleUser 
+                    ? "border-rose-500/20 text-rose-500 bg-rose-500/5 hover:bg-rose-500/10" 
+                    : "border-teal-500/20 text-teal-400 bg-teal-500/5 hover:bg-teal-500/10"}`}
+              >
+                {googleUser ? "Disconnect" : "Google Login"}
+              </button>
+            </div>
           </div>
         </div>
 

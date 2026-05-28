@@ -452,3 +452,37 @@ export async function dbSignIn(email: string, password: string): Promise<{ data:
     return { data: null, error: { message: err.message || "Bypass authenticate connection exception." } };
   }
 }
+
+export async function dbBulkUpsert(data: {
+  leads?: Lead[];
+  appointments?: Appointment[];
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const payload = {
+      users: [],
+      leads: (data.leads || []).map(mapLeadToDb),
+      appointments: (data.appointments || []).map(mapAppointmentToDb),
+      communicationLogs: [],
+      leadEditLogs: []
+    };
+
+    const res = await fetch("/api/db/push", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    
+    if (!res.ok) {
+      const parsed = await res.json().catch(() => ({}));
+      return { success: false, error: parsed.error || `HTTP ${res.status} push rejected` };
+    }
+    const parsed = await res.json();
+    if (!parsed.success) {
+      return { success: false, error: parsed.errors?.join(", ") || "Bulk operation failed" };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+}
+

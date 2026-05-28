@@ -1,0 +1,316 @@
+import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from "firebase/auth";
+import firebaseConfig from "../firebase-applet-config.json";
+import { Lead, LeadSource, LeadStatus, LeadTemperature } from "./types";
+
+// Initialize Firebase App securely (avoiding duplicate initializations)
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+export const auth = getAuth(app);
+
+const provider = new GoogleAuthProvider();
+// Request Google Sheets scope (in addition to standard profiles/emails)
+provider.addScope("https://www.googleapis.com/auth/spreadsheets.readonly");
+
+let cachedAccessToken: string | null = null;
+let isSigningIn = false;
+
+// Initialize state listener to restore auth state
+export const initGoogleAuth = (
+  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthFailure?: () => void
+) => {
+  return onAuthStateChanged(auth, async (user: User | null) => {
+    if (user) {
+      if (cachedAccessToken) {
+        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
+      } else if (!isSigningIn) {
+        cachedAccessToken = null;
+        if (onAuthFailure) onAuthFailure();
+      }
+    } else {
+      cachedAccessToken = null;
+      if (onAuthFailure) onAuthFailure();
+    }
+  });
+};
+
+// Sign in with Google to fetch spreadsheet-access permissions
+export const googleSheetsSignIn = async (): Promise<{ user: User; accessToken: string } | null> => {
+  try {
+    isSigningIn = true;
+    const result = await signInWithPopup(auth, provider);
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (!credential?.accessToken) {
+      throw new Error("Failed to retrieve Google Sheets access credential delegation from authentication callback.");
+    }
+    cachedAccessToken = credential.accessToken;
+    // Persist token in session cache
+    sessionStorage.setItem("google_sheets_token", cachedAccessToken);
+    return { user: result.user, accessToken: cachedAccessToken };
+  } catch (err: any) {
+    console.error("Google sheets login exception:", err);
+    throw err;
+  } finally {
+    isSigningIn = false;
+  }
+};
+
+// Retrieve current cached Google token
+export const getCachedGoogleToken = (): string | null => {
+  if (!cachedAccessToken) {
+    cachedAccessToken = sessionStorage.getItem("google_sheets_token");
+  }
+  return cachedAccessToken;
+};
+
+// Sign out from Google Session
+export const googleSheetsSignOut = async () => {
+  await auth.signOut();
+  cachedAccessToken = null;
+  sessionStorage.removeItem("google_sheets_token");
+};
+
+// Parse spreadsheet URL to extract spreadsheet ID
+export function extractSpreadsheetId(urlOrId: string): string {
+  if (!urlOrId) return "";
+  const clean = urlOrId.trim();
+  // Format matching: https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit#gid=0
+  const match = clean.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return clean; // If it's already just the spreadsheet ID
+}
+
+// Simple CSV Parser to decode public Google Spreadsheet exports
+function parseCSV(csvText: string): string[][] {
+  const lines: string[][] = [];
+  let row: string[] = [];
+  let inQuotes = false;
+  let currentVal = "";
+
+  for (let i = 0; i < csvText.length; i++) {
+    const char = csvText[i];
+    const nextChar = csvText[i + 1] || "";
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        currentVal += '"';
+        i++; // skip next quote
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      row.push(currentVal.trim());
+      currentVal = "";
+    } else if ((char === '\r' || char === '\n') && !inQuotes) {
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+      row.push(currentVal.trim());
+      lines.push(row);
+      row = [];
+      currentVal = "";
+    } else {
+      currentVal += char;
+    }
+  }
+  if (row.length > 0 || currentVal) {
+    row.push(currentVal.trim());
+    lines.push(row);
+  }
+  return lines;
+}
+
+// REST Interface callback to fetch values from Google Sheet
+export async function fetchGoogleSheetValues(
+  spreadsheetId: string,
+  range: string,
+  accessToken?: string | null
+): Promise<any[][]> {
+  const cleanId = extractSpreadsheetId(spreadsheetId);
+  let sheetName = range || "Sheet1";
+  if (sheetName.includes("!")) {
+    sheetName = sheetName.split("!")[0];
+  }
+
+  const tryApiCall = async () => {
+    if (!accessToken) {
+      throw new Error("No Google access token provided/available");
+    }
+    const cleanRange = encodeURIComponent(range || "Sheet1!A1:Z100");
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${cleanId}/values/${cleanRange}`;
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      const errorDetails = await response.json().catch(() => ({}));
+      throw new Error(errorDetails?.error?.message || `HTTP ${response.status} Request Rejected`);
+    }
+
+    const result = await response.json();
+    return result.values || [];
+  };
+
+  const tryPublicCsvCall = async () => {
+    const url = `/api/proxy-sheet-csv?spreadsheetId=${cleanId}&sheet=${encodeURIComponent(sheetName)}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      const errorDetails = await response.json().catch(() => ({}));
+      throw new Error(errorDetails?.error || `Public export failed. If this spreadsheet is private, kindly ensure Google login credentials are valid and active. If it is public, verify that 'Anyone with the link can view/comment/edit' is selected in Google Drive Share settings.`);
+    }
+    const csvText = await response.text();
+    return parseCSV(csvText);
+  };
+
+  if (accessToken) {
+    try {
+      return await tryApiCall();
+    } catch (apiErr: any) {
+      console.warn("[Google Sheets API Failed, trying public CSV exporter fallback...]", apiErr);
+      try {
+        return await tryPublicCsvCall();
+      } catch (csvErr: any) {
+        throw new Error(`${apiErr.message || String(apiErr)}. Fallback also failed: ${csvErr.message}`);
+      }
+    }
+  } else {
+    // No access token present: attempt public spreadsheet export instantly
+    return await tryPublicCsvCall();
+  }
+}
+
+// Fuzzy header match helper
+function findHeaderIndex(headers: string[], syns: string[]): number {
+  return headers.findIndex(h => {
+    if (!h) return false;
+    const norm = h.toLowerCase().replace(/[\s_-]/g, "");
+    return syns.some(syn => norm.includes(syn) || syn.includes(norm));
+  });
+}
+
+// Convert dynamic spreadsheet rows to CRM Leads
+export function mapSpreadsheetRowsToLeads(
+  rows: any[][]
+): Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] {
+  if (rows.length < 2) return [];
+
+  // Extract first row as headers and normalize
+  const rawHeaders = rows[0].map((h: any) => String(h || "").trim());
+  const headerClean = rawHeaders.map(h => h.toLowerCase());
+
+  // Find column array mappings
+  const nameIdx = findHeaderIndex(rawHeaders, ["name", "leadname", "client", "customer", "prospect"]);
+  const emailIdx = findHeaderIndex(rawHeaders, ["email", "emailaddress", "mail", "contactemail"]);
+  const phoneIdx = findHeaderIndex(rawHeaders, ["phone", "phonenumber", "contact", "mobile", "tel"]);
+  const companyIdx = findHeaderIndex(rawHeaders, ["company", "organization", "org", "firm"]);
+  const positionIdx = findHeaderIndex(rawHeaders, ["position", "designation", "title", "role"]);
+  const sourceIdx = findHeaderIndex(rawHeaders, ["source", "leadsource", "channel", "origin"]);
+  const budgetIdx = findHeaderIndex(rawHeaders, ["budget", "investment", "price", "limit"]);
+  const locationIdx = findHeaderIndex(rawHeaders, ["location", "city", "address", "state"]);
+  const notesIdx = findHeaderIndex(rawHeaders, ["notes", "comments", "remarks", "description", "details"]);
+  const projectIdx = findHeaderIndex(rawHeaders, ["project", "projectname", "property", "projectName"]);
+  const statusIdx = findHeaderIndex(rawHeaders, ["status", "leadstatus", "stage"]);
+  const tempIdx = findHeaderIndex(rawHeaders, ["temperature", "temp", "rating", "priority"]);
+
+  const resultLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] = [];
+
+  // Process rows
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (row.length === 0) continue;
+
+    // Must have at least a Name and either Email or Phone to register a valid Lead
+    const name = nameIdx !== -1 ? String(row[nameIdx] || "").trim() : "";
+    if (!name) continue; // Skip rows without name
+
+    const email = emailIdx !== -1 ? String(row[emailIdx] || "").trim() : "";
+    const phone = phoneIdx !== -1 ? String(row[phoneIdx] || "").trim() : "";
+
+    // Normalize Source
+    let source: LeadSource = "Website";
+    if (sourceIdx !== -1) {
+      const parsedSrc = String(row[sourceIdx] || "").trim().toLowerCase();
+      if (parsedSrc.includes("meta") || parsedSrc.includes("facebook") || parsedSrc.includes("instagram")) {
+        source = "Meta Ad";
+      } else if (parsedSrc.includes("google") || parsedSrc.includes("search")) {
+        source = "Google Ad";
+      } else if (parsedSrc.includes("board")) {
+        source = "IVR Board";
+      } else if (parsedSrc.includes("ivr")) {
+        source = "IVR";
+      } else if (parsedSrc.includes("reference") || parsedSrc.includes("friend")) {
+        source = "Reference";
+      } else if (parsedSrc.includes("social") || parsedSrc.includes("linkedin")) {
+        source = "Social Media";
+      } else if (parsedSrc.includes("personal")) {
+        source = "Personal";
+      } else if (parsedSrc.includes("cold")) {
+        source = "Cold Call";
+      } else {
+        source = "Website"; // Defaults to Website as a CRM compliance fallback
+      }
+    }
+
+    // Normalize Status
+    let status: LeadStatus = "Interested";
+    if (statusIdx !== -1) {
+      const parsedStatus = String(row[statusIdx] || "").trim().toLowerCase();
+      if (parsedStatus.includes("follow")) status = "Follow Up";
+      else if (parsedStatus.includes("share") || parsedStatus.includes("detail")) status = "Detailed Share";
+      else if (parsedStatus.includes("not interested")) status = "Not Interested";
+      else if (parsedStatus.includes("meeting")) status = "Meeting Done";
+      else if (parsedStatus.includes("visit") || parsedStatus.includes("site")) status = "Site Visit";
+      else if (parsedStatus.includes("callback")) status = "Call Back";
+      else if (parsedStatus.includes("junk") || parsedStatus.includes("spam")) status = "Junk";
+      else if (parsedStatus.includes("duplicate")) status = "Duplicate";
+    }
+
+    // Normalize Temperature
+    let temperature: LeadTemperature = "Warm";
+    if (tempIdx !== -1) {
+      const parsedTemp = String(row[tempIdx] || "").trim().toLowerCase();
+      if (parsedTemp.includes("hot")) temperature = "Hot";
+      else if (parsedTemp.includes("cold")) temperature = "Cold";
+      else if (parsedTemp.includes("dead")) temperature = "Dead";
+    }
+
+    const company = companyIdx !== -1 ? String(row[companyIdx] || "").trim() : "";
+    const position = positionIdx !== -1 ? String(row[positionIdx] || "").trim() : "";
+    const budget = budgetIdx !== -1 ? String(row[budgetIdx] || "").trim() : "Not Specified";
+    const location = locationIdx !== -1 ? String(row[locationIdx] || "").trim() : "Not Specified";
+    const notes = notesIdx !== -1 ? String(row[notesIdx] || "").trim() : "Ingested from Google Sheets pipeline.";
+    const projectName = projectIdx !== -1 ? String(row[projectIdx] || "").trim() : "";
+
+    // CRITICAL DIRECTIVE REQUIREMENT: "and all leads assign to Admin so that admin can assign to leads as per sales team requirements."
+    const assignedAgent = "Admin";
+
+    const lastCommunication = new Date().toISOString().split("T")[0];
+
+    resultLeads.push({
+      name,
+      company,
+      position,
+      email,
+      phone,
+      source,
+      status,
+      temperature,
+      budget,
+      location,
+      assignedAgent,
+      notes,
+      projectName,
+      lastCommunication,
+      score: 50 // default intake score
+    });
+  }
+
+  return resultLeads;
+}

@@ -73,7 +73,11 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
   const handleSelectPreset = (user: User) => {
     setSelectedPresetId(user.id);
     setEmailInput(user.email);
-    setPasswordInput("••••••••");
+    if (user.role === "super_admin" || user.role === "admin") {
+      setPasswordInput("••••••••");
+    } else {
+      setPasswordInput(""); // Empty out password for TL and Sales Team - must manually type!
+    }
     setErrorText("");
     setSuccessFeedback("");
   };
@@ -422,7 +426,13 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
                     setPasswordInput(val);
                   }
                 }}
-                placeholder="••••••••"
+                placeholder={(() => {
+                  const matchedUser = users.find(u => u.email.toLowerCase() === emailInput.trim().toLowerCase());
+                  if (matchedUser && (matchedUser.role === "team_leader" || matchedUser.role === "sales_team")) {
+                    return "Manually type password";
+                  }
+                  return "••••••••";
+                })()}
                 className={`w-full px-3.5 pl-9 py-2.5 text-xs rounded-xl border transition duration-150 outline-none
                   ${darkMode 
                     ? "bg-slate-950 border-slate-800 text-white focus:border-teal-500/50" 

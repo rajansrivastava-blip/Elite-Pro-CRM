@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { INITIAL_LEADS, INITIAL_APPOINTMENTS, INITIAL_COMMUNICATION_LOGS, SALES_METRICS_HISTORY, PRESET_USERS } from "./data";
 import { Lead, Appointment, CommunicationLog, User, UserRole, LeadEditLog } from "./types";
 import Sidebar from "./components/Sidebar";
@@ -22,7 +22,8 @@ import {
   dbUpsertAppointment,
   dbDeleteAppointment,
   dbUpsertCommunicationLog,
-  dbUpsertLeadEditLog
+  dbUpsertLeadEditLog,
+  dbBulkUpsert
 } from "./supabase";
 import { 
   Menu, 
@@ -112,6 +113,24 @@ export default function App() {
     return saved ? JSON.parse(saved) === "true" : false; // Default to eye-comfort clean light mode
   });
 
+  // Hoisted Google Sheets configuration states (prevent state loss when doing other work / switching tabs)
+  const [sheetUrl, setSheetUrl] = useState<string>(() => localStorage.getItem("google_sheets_sync_url") || "");
+  const [sheetRange, setSheetRange] = useState<string>(() => localStorage.getItem("google_sheets_sync_range") || "Sheet1");
+  const [autoSheetsSync, setAutoSheetsSync] = useState<boolean>(() => localStorage.getItem("google_sheets_sync_auto") === "true");
+  const [lastSheetsSynced, setLastSheetsSynced] = useState<string>(() => localStorage.getItem("google_sheets_last_sync_time") || "Never");
+
+  useEffect(() => {
+    localStorage.setItem("google_sheets_sync_url", sheetUrl);
+  }, [sheetUrl]);
+
+  useEffect(() => {
+    localStorage.setItem("google_sheets_sync_range", sheetRange);
+  }, [sheetRange]);
+
+  useEffect(() => {
+    localStorage.setItem("google_sheets_sync_auto", autoSheetsSync ? "true" : "false");
+  }, [autoSheetsSync]);
+
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncHistory, setSyncHistory] = useState<string[]>([
     "2026-05-25 07:44:12 GMT - Master Node Aligned Successfully",
@@ -132,10 +151,10 @@ export default function App() {
   });
   const [isSupabaseOpInProgress, setIsSupabaseOpInProgress] = useState<boolean>(false);
 
-  // Supabase Auto Sync setting: Default to false for Local-First control (Constraint: No automatic changes)
+  // Supabase Auto Sync setting: Default to true for automatic real-time cloud database synchronization
   const [isAutoSyncEnabled, setIsAutoSyncEnabled] = useState<boolean>(() => {
     const saved = localStorage.getItem("elite_pro_auto_sync");
-    return saved ? saved === "true" : false;
+    return saved ? saved === "true" : true;
   });
 
   const handleToggleAutoSync = () => {
@@ -184,8 +203,12 @@ export default function App() {
           setUsers(prev => {
             const merged = [...res.users!];
             prev.forEach(localUser => {
-              const exists = merged.some(u => u.id === localUser.id || u.email.toLowerCase() === localUser.email.toLowerCase());
-              if (!exists) {
+              const matchedIdx = merged.findIndex(u => u.id === localUser.id || u.email.toLowerCase() === localUser.email.toLowerCase());
+              if (matchedIdx >= 0) {
+                if (!merged[matchedIdx].password && localUser.password) {
+                  merged[matchedIdx].password = localUser.password;
+                }
+              } else {
                 merged.push(localUser);
               }
             });
@@ -267,7 +290,22 @@ export default function App() {
     let success = res.errors.length === 0;
     if (success) {
       if (res.leads) setLeads(res.leads);
-      if (res.users) setUsers(res.users);
+      if (res.users) {
+        setUsers(prev => {
+          const merged = [...res.users!];
+          prev.forEach(localUser => {
+            const matchedIdx = merged.findIndex(u => u.id === localUser.id || u.email.toLowerCase() === localUser.email.toLowerCase());
+            if (matchedIdx >= 0) {
+              if (!merged[matchedIdx].password && localUser.password) {
+                merged[matchedIdx].password = localUser.password;
+              }
+            } else {
+              merged.push(localUser);
+            }
+          });
+          return merged;
+        });
+      }
       if (res.appointments) setAppointments(res.appointments);
       if (res.communicationLogs) setCommunicationLogs(res.communicationLogs);
       if (res.leadEditLogs) setLeadEditLogs(res.leadEditLogs);
@@ -353,6 +391,8 @@ export default function App() {
     localStorage.setItem("elite_pro_users", JSON.stringify(users));
   }, [users]);
 
+
+
   // Self-deactivation/Admin-deactivation kick out check
   useEffect(() => {
     if (currentUser) {
@@ -419,15 +459,18 @@ export default function App() {
     };
     setUsers(prev => [...prev, item]);
 
-    if (isAutoSyncEnabled) {
-      const res = await dbUpsertUser(item);
-      if (!res.success) {
-        console.warn("Failed to upsert user to Supabase:", res.error);
-        triggerAlert(
-          "Supabase User Sync Alert",
-          `User portfolio for "${item.name}" registered successfully to your local browser storage, but failed to write onto your Supabase database!\n\nDatabase Error: "${res.error || "No response"}"\n\nPlease ensure your 'users' table is properly configured under your Supabase backend using the SQL commands located inside the Integrations "System Sync" tab.`
-        );
-      }
+    const res = await dbUpsertUser(item);
+    if (!res.success) {
+      console.warn("Failed to upsert user to Supabase:", res.error);
+      triggerAlert(
+        "Supabase User Sync Alert",
+        `User portfolio for "${item.name}" registered successfully to your local browser storage, but failed to write onto your Supabase database!\n\nDatabase Error: "${res.error || "No response"}"\n\nPlease ensure your 'users' table is properly configured under your Supabase backend using the SQL commands located inside the Integrations "System Sync" tab.`
+      );
+    } else {
+      triggerAlert(
+        "Supabase Sync Success",
+        `New portal account for "${item.name}" has been successfully stored in your remote Supabase users database.\n\nThey can now login instantly using their email: ${item.email}`
+      );
     }
   };
 
@@ -438,15 +481,18 @@ export default function App() {
       setCurrentUser(updated);
     }
 
-    if (isAutoSyncEnabled) {
-      const res = await dbUpsertUser(updated);
-      if (!res.success) {
-        console.warn("Failed to update user to Supabase:", res.error);
-        triggerAlert(
-          "Supabase User Update Alert",
-          `User updates saved locally, but we couldn't send them to your Supabase database!\n\nDatabase Error: "${res.error || "No response"}"`
-        );
-      }
+    const res = await dbUpsertUser(updated);
+    if (!res.success) {
+      console.warn("Failed to update user to Supabase:", res.error);
+      triggerAlert(
+        "Supabase User Update Alert",
+        `User updates saved locally, but we couldn't send them to your Supabase database!\n\nDatabase Error: "${res.error || "No response"}"`
+      );
+    } else {
+      triggerAlert(
+        "Supabase Sync Success",
+        `User file for "${updated.name}" has been successfully updated on your remote Supabase users database.\n\nAny modified credentials (including login password) are active immediately.`
+      );
     }
   };
 
@@ -554,18 +600,16 @@ export default function App() {
     setLeads(prev => [...newItems, ...prev]);
     setAppointments(prev => [...newAppts, ...prev]);
 
-    // Push each newly registered lead to Supabase (only if Auto-Sync is enabled)
-    if (isAutoSyncEnabled) {
-      const pushPromises = [
-        ...newItems.map(item => dbUpsertLead(item)),
-        ...newAppts.map(appt => dbUpsertAppointment(appt))
-      ];
+    // Push each newly registered lead to Supabase (only if Auto-Sync is enabled in local state or storage)
+    const isSyncActiveCombined = isAutoSyncEnabled || localStorage.getItem("elite_pro_auto_sync") !== "false";
+    if (isSyncActiveCombined) {
+      const dbRes = await dbBulkUpsert({
+        leads: newItems,
+        appointments: newAppts
+      });
 
-      const responses = await Promise.all(pushPromises);
-      const failedOnes = responses.filter(r => !r.success);
-
-      if (failedOnes.length > 0) {
-        const sampleErr = failedOnes[0].error || "Missing schema table or blocked with RLS";
+      if (!dbRes.success) {
+        const sampleErr = dbRes.error || "Missing schema table or blocked with RLS";
         console.warn("Supabase bulk registration failed:", sampleErr);
         triggerAlert(
           "Supabase Bulk Sync Alert",
@@ -574,6 +618,88 @@ export default function App() {
       }
     }
   };
+
+  // Stable refs to prevent permanent timers from capturing stale React closures
+  const leadsRef = useRef(leads);
+  useEffect(() => {
+    leadsRef.current = leads;
+  }, [leads]);
+
+  const handleBulkAddLeadsRef = useRef(handleBulkAddLeads);
+  useEffect(() => {
+    handleBulkAddLeadsRef.current = handleBulkAddLeads;
+  }, [handleBulkAddLeads]);
+
+  const sheetUrlRef = useRef(sheetUrl);
+  useEffect(() => {
+    sheetUrlRef.current = sheetUrl;
+  }, [sheetUrl]);
+
+  const sheetRangeRef = useRef(sheetRange);
+  useEffect(() => {
+    sheetRangeRef.current = sheetRange;
+  }, [sheetRange]);
+
+  const autoSheetsSyncRef = useRef(autoSheetsSync);
+  useEffect(() => {
+    autoSheetsSyncRef.current = autoSheetsSync;
+  }, [autoSheetsSync]);
+
+  // Background Google Sheets Synchronization Loop
+  useEffect(() => {
+    const runSheetsBackgroundSync = async () => {
+      const isAuto = autoSheetsSyncRef.current;
+      const sheetUrlVal = sheetUrlRef.current;
+      const sheetRangeVal = sheetRangeRef.current;
+      const token = sessionStorage.getItem("google_sheets_token") || undefined;
+
+      if (isAuto && sheetUrlVal) {
+        try {
+          const { fetchGoogleSheetValues, mapSpreadsheetRowsToLeads } = await import("./googleAuth");
+          const rows = await fetchGoogleSheetValues(sheetUrlVal, sheetRangeVal, token);
+          if (rows && rows.length >= 2) {
+            const parsedLeads = mapSpreadsheetRowsToLeads(rows);
+            if (parsedLeads.length > 0) {
+              const existingLeadsSet = new Set(
+                leadsRef.current.map(l => {
+                  const name = (l.name || "").toLowerCase().trim();
+                  const email = (l.email || "").toLowerCase().trim();
+                  return email ? `${name}::${email}` : name;
+                })
+              );
+
+              const filteredNewLeads = parsedLeads.filter(nl => {
+                const name = (nl.name || "").toLowerCase().trim();
+                const email = (nl.email || "").toLowerCase().trim();
+                const key = email ? `${name}::${email}` : name;
+                return !existingLeadsSet.has(key);
+              });
+
+              if (filteredNewLeads.length > 0) {
+                // Call via the up-to-date ref to execute the latest function with accurate states
+                await handleBulkAddLeadsRef.current(filteredNewLeads);
+                const updatedTime = new Date().toLocaleTimeString("en-US", { hour12: true }) + " (Local)";
+                setLastSheetsSynced(updatedTime);
+                localStorage.setItem("google_sheets_last_sync_time", updatedTime);
+                console.log(`[Google Sheets Auto-Sync] Automatically synchronized ${filteredNewLeads.length} new leads assigned to Admin.`);
+              }
+            }
+          }
+        } catch (err) {
+          console.warn("[Google Sheets Background-Sync Interrupted]:", err);
+        }
+      }
+    };
+
+    // Steady interval: every 60 seconds, starting with a 7 second initial delay
+    const intervalId = setInterval(runSheetsBackgroundSync, 60000);
+    const timeoutId = setTimeout(runSheetsBackgroundSync, 7000);
+
+    return () => {
+      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+    };
+  }, []);
 
   // Handler: Update Lead
   const handleUpdateLead = async (updated: Lead) => {
@@ -922,6 +1048,15 @@ export default function App() {
             appointments={appointments}
             communicationLogs={communicationLogs}
             leadEditLogs={leadEditLogs}
+            onBulkAddLeads={handleBulkAddLeads}
+            sheetUrl={sheetUrl}
+            setSheetUrl={setSheetUrl}
+            sheetRange={sheetRange}
+            setSheetRange={setSheetRange}
+            autoSheetsSync={autoSheetsSync}
+            setAutoSheetsSync={setAutoSheetsSync}
+            lastSheetsSynced={lastSheetsSynced}
+            setLastSheetsSynced={setLastSheetsSynced}
           />
         );
       case "users":

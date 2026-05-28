@@ -230,6 +230,31 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
+// Proxy endpoint to download public Google Sheet CSV exports, bypassing CORS entirely in browser environments
+app.get("/api/proxy-sheet-csv", async (req, res) => {
+  try {
+    const { spreadsheetId, sheet } = req.query;
+    if (!spreadsheetId) {
+      return res.status(400).json({ error: "Spreadsheet ID is required" });
+    }
+    const targetUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv` + 
+      (sheet ? `&sheet=${encodeURIComponent(String(sheet))}` : "");
+    
+    // Perform standard HTTP get on backend
+    const response = await fetch(targetUrl);
+    if (!response.ok) {
+      return res.status(response.status).json({ 
+        error: `Google Sheets returned HTTP ${response.status}. Please check your Google spreadsheet Share settings and confirm it is visible to 'Anyone with the link'.` 
+      });
+    }
+    const csvContent = await response.text();
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    return res.send(csvContent);
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to retrieve public spreadsheet records." });
+  }
+});
+
 // DB: Health / Ping / Schema Verification
 app.get("/api/db/status", async (req, res) => {
   try {
@@ -266,6 +291,70 @@ app.get("/api/db/status", async (req, res) => {
   }
 });
 
+// Helper for resilient database upserts, ignoring columns that do not exist on the target Supabase table
+async function resilientUpsert(tableName: string, payload: any): Promise<{ success: boolean; error?: any }> {
+  let currentPayload = JSON.parse(JSON.stringify(payload));
+  const removedColumns = new Set<string>();
+  
+  while (true) {
+    const { error } = await supabase.from(tableName).upsert(currentPayload);
+    if (!error) {
+      return { success: true };
+    }
+    
+    let colName: string | null = null;
+    if (error.message) {
+      // 1. Matches PostgREST schema cache error: "Could not find the 'active' column of 'users' in the schema cache"
+      const matchSchema = error.message.match(/Could not find the '([^']+)' column/i);
+      if (matchSchema && matchSchema[1]) {
+        colName = matchSchema[1];
+      }
+      // 2. Matches PostgreSQL standard column error: column "active" of relation "users" does not exist
+      if (!colName) {
+        const matchDouble = error.message.match(/column "([^"]+)"/i);
+        if (matchDouble && matchDouble[1]) {
+          colName = matchDouble[1];
+        }
+      }
+      // 3. Matches any variant like: column 'active' does not exist
+      if (!colName) {
+        const matchSingle = error.message.match(/column '([^']+)'/i);
+        if (matchSingle && matchSingle[1]) {
+          colName = matchSingle[1];
+        }
+      }
+    }
+    
+    const isMissingColumnError = error.code === "42703" || !!colName ||
+      (error.message && (
+        error.message.includes("does not exist") || 
+        error.message.includes("schema cache") || 
+        error.message.includes("column")
+      ));
+      
+    if (isMissingColumnError && colName) {
+      if (removedColumns.has(colName)) {
+        return { success: false, error };
+      }
+      removedColumns.add(colName);
+      console.warn(`[Supabase Integration Sync] Column "${colName}" does not exist in table "${tableName}". Filtering it out and retrying.`);
+      
+      if (Array.isArray(currentPayload)) {
+        currentPayload = currentPayload.map((item: any) => {
+          const copy = { ...item };
+          delete copy[colName];
+          return copy;
+        });
+      } else {
+        delete currentPayload[colName];
+      }
+      continue;
+    }
+    
+    return { success: false, error };
+  }
+}
+
 // DB: Push Full Bundle (Manual sync or Seed push)
 app.post("/api/db/push", async (req, res) => {
   try {
@@ -273,24 +362,24 @@ app.post("/api/db/push", async (req, res) => {
     const errors: string[] = [];
 
     if (users && users.length > 0) {
-      const { error } = await supabase.from("users").upsert(users);
-      if (error) errors.push(`Users push: ${error.message}`);
+      const { success, error } = await resilientUpsert("users", users);
+      if (!success && error) errors.push(`Users push: ${error.message || JSON.stringify(error)}`);
     }
     if (leads && leads.length > 0) {
-      const { error } = await supabase.from("leads").upsert(leads);
-      if (error) errors.push(`Leads push: ${error.message}`);
+      const { success, error } = await resilientUpsert("leads", leads);
+      if (!success && error) errors.push(`Leads push: ${error.message || JSON.stringify(error)}`);
     }
     if (appointments && appointments.length > 0) {
-      const { error } = await supabase.from("appointments").upsert(appointments);
-      if (error) errors.push(`Appointments push: ${error.message}`);
+      const { success, error } = await resilientUpsert("appointments", appointments);
+      if (!success && error) errors.push(`Appointments push: ${error.message || JSON.stringify(error)}`);
     }
     if (communicationLogs && communicationLogs.length > 0) {
-      const { error } = await supabase.from("communication_logs").upsert(communicationLogs);
-      if (error) errors.push(`Comm logs push: ${error.message}`);
+      const { success, error } = await resilientUpsert("communication_logs", communicationLogs);
+      if (!success && error) errors.push(`Comm logs push: ${error.message || JSON.stringify(error)}`);
     }
     if (leadEditLogs && leadEditLogs.length > 0) {
-      const { error } = await supabase.from("lead_edit_logs").upsert(leadEditLogs);
-      if (error) errors.push(`Edit logs push: ${error.message}`);
+      const { success, error } = await resilientUpsert("lead_edit_logs", leadEditLogs);
+      if (!success && error) errors.push(`Edit logs push: ${error.message || JSON.stringify(error)}`);
     }
 
     return res.json({
@@ -354,8 +443,8 @@ app.get("/api/db/pull", async (req, res) => {
 // DB: Upsert/Delete Individual Record Proxies
 app.post("/api/db/upsert-user", async (req, res) => {
   try {
-    const { error } = await supabase.from("users").upsert(req.body);
-    if (error) return res.status(400).json({ error: error.message });
+    const { success, error } = await resilientUpsert("users", req.body);
+    if (!success) return res.status(400).json({ error: error?.message || "Upsert user failed" });
     return res.json({ success: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
@@ -380,8 +469,8 @@ app.post("/api/db/delete-user", async (req, res) => {
 
 app.post("/api/db/upsert-lead", async (req, res) => {
   try {
-    const { error } = await supabase.from("leads").upsert(req.body);
-    if (error) return res.status(400).json({ error: error.message });
+    const { success, error } = await resilientUpsert("leads", req.body);
+    if (!success) return res.status(400).json({ error: error?.message || "Upsert lead failed" });
     return res.json({ success: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
@@ -397,8 +486,8 @@ app.post("/api/db/delete-lead", async (req, res) => {
 
 app.post("/api/db/upsert-appointment", async (req, res) => {
   try {
-    const { error } = await supabase.from("appointments").upsert(req.body);
-    if (error) return res.status(400).json({ error: error.message });
+    const { success, error } = await resilientUpsert("appointments", req.body);
+    if (!success) return res.status(400).json({ error: error?.message || "Upsert appointment failed" });
     return res.json({ success: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
@@ -414,16 +503,16 @@ app.post("/api/db/delete-appointment", async (req, res) => {
 
 app.post("/api/db/upsert-communication-log", async (req, res) => {
   try {
-    const { error } = await supabase.from("communication_logs").upsert(req.body);
-    if (error) return res.status(400).json({ error: error.message });
+    const { success, error } = await resilientUpsert("communication_logs", req.body);
+    if (!success) return res.status(400).json({ error: error?.message || "Upsert communication log failed" });
     return res.json({ success: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
 
 app.post("/api/db/upsert-lead-edit-log", async (req, res) => {
   try {
-    const { error } = await supabase.from("lead_edit_logs").upsert(req.body);
-    if (error) return res.status(400).json({ error: error.message });
+    const { success, error } = await resilientUpsert("lead_edit_logs", req.body);
+    if (!success) return res.status(400).json({ error: error?.message || "Upsert lead edit log failed" });
     return res.json({ success: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });

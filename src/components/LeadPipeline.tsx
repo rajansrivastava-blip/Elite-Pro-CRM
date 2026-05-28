@@ -57,6 +57,31 @@ export default function LeadPipeline({
   currentUser,
   leadEditLogs = []
 }: LeadPipelineProps) {
+  // Find duplicate phone numbers of leads across any sources
+  const isDuplicatePhone = (phoneStr: string, ignoreId?: string) => {
+    const val = (phoneStr || "").trim();
+    if (!val || val === "N/A" || val === "-") return false;
+    
+    // Normalize: strip non-digits for standard checking
+    const norm = val.replace(/\D/g, "");
+    
+    let count = 0;
+    leads.forEach(l => {
+      if (ignoreId && l.id === ignoreId) return;
+      const otherVal = (l.phone || "").trim();
+      if (!otherVal || otherVal === "N/A" || otherVal === "-") return;
+      
+      const otherNorm = otherVal.replace(/\D/g, "");
+      if (norm.length >= 6 && otherNorm.length >= 6) {
+        if (norm === otherNorm) count++;
+      } else {
+        if (val.toLowerCase() === otherVal.toLowerCase()) count++;
+      }
+    });
+    
+    return count > 0;
+  };
+
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -783,8 +808,16 @@ export default function LeadPipeline({
                         </span>
                       )}
                     </h4>
-                    <p className={`text-xs mt-0.5 ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
-                      {lead.position || "Private Client"} | <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
+                    <p className={`text-xs mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
+                      <span>{lead.position || "Private Client"}</span>
+                      <span className="text-slate-500 font-light">|</span>
+                      <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
+                      {isDuplicatePhone(lead.phone, lead.id) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-450 border border-rose-500/20 text-[9px] font-medium font-sans animate-pulse">
+                          <AlertCircle size={10} />
+                          Duplicate Number
+                        </span>
+                      )}
                     </p>
                   </div>
 
@@ -852,9 +885,19 @@ export default function LeadPipeline({
                       <Mail size={12} />
                       {lead.email}
                     </a>
-                    <a href={`tel:${lead.phone}`} className="hover:text-teal-400 flex items-center gap-1">
-                      <Phone size={12} />
-                      {lead.phone}
+                    <a 
+                      href={`tel:${lead.phone}`} 
+                      className={`flex items-center gap-1 px-1 py-0.5 rounded transition ${
+                        isDuplicatePhone(lead.phone, lead.id) 
+                          ? "text-rose-400 bg-rose-500/5 hover:bg-rose-500/10 hover:text-rose-350 font-medium" 
+                          : "hover:text-teal-400"
+                      }`}
+                      title={isDuplicatePhone(lead.phone, lead.id) ? "This phone number exists on multiple leads " : undefined}
+                    >
+                      <Phone size={12} className={isDuplicatePhone(lead.phone, lead.id) ? "text-rose-400 animate-bounce" : "text-slate-400"} />
+                      <span className={isDuplicatePhone(lead.phone, lead.id) ? "font-semibold decoration-dashed underline decoration-rose-500/40 text-rose-300" : ""}>
+                        {lead.phone}
+                      </span>
                     </a>
                   </div>
 
@@ -1132,9 +1175,16 @@ export default function LeadPipeline({
                     placeholder="e.g. +91 99999 99999"
                     value={newLeadForm.phone}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, phone: e.target.value })}
-                    className={`w-full px-3 py-2 text-xs rounded-lg border 
-                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}
+                      ${isDuplicatePhone(newLeadForm.phone) ? "border-amber-500/55 text-amber-300 bg-amber-500/5 focus:ring-amber-500" : ""}`}
                   />
+                  {isDuplicatePhone(newLeadForm.phone) && (
+                    <p className="text-[10px] text-amber-500 mt-1 flex items-center gap-1 font-sans font-medium">
+                      <AlertCircle size={11} className="shrink-0 text-amber-500" />
+                      Number already registered in CRM.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1420,9 +1470,16 @@ export default function LeadPipeline({
                     type="text"
                     value={editingLead.phone}
                     onChange={(e) => setEditingLead({ ...editingLead, phone: e.target.value })}
-                    className={`w-full px-3 py-2 text-xs rounded-lg border 
-                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                    className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}
+                      ${isDuplicatePhone(editingLead.phone, editingLead.id) ? "border-amber-500/55 text-amber-300 bg-amber-500/5 focus:ring-amber-500" : ""}`}
                   />
+                  {isDuplicatePhone(editingLead.phone, editingLead.id) && (
+                    <p className="text-[10px] text-amber-500 mt-1 flex items-center gap-1 font-sans font-medium">
+                      <AlertCircle size={11} className="shrink-0 text-amber-500" />
+                      Warning: Number registered on another lead in CRM.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1711,7 +1768,8 @@ export default function LeadPipeline({
                     >
                       <tr>
                         <th className="p-2 border-r border-slate-800/20">Name</th>
-                        <th className="p-2 border-r border-slate-800/20">Project Name</th>
+                        <th className="p-2 border-r border-slate-800/20 font-sans">Contact Phone</th>
+                        <th className="p-2 border-r border-slate-800/20 font-mono">Project Name</th>
                         <th className="p-2 border-r border-slate-800/20">Source</th>
                         <th className="p-2 border-r border-slate-800/20">Advisor Assigned</th>
                         <th className="p-2 border-r border-slate-800/20">Location</th>
@@ -1723,6 +1781,19 @@ export default function LeadPipeline({
                       {importPreviewData.map((lead, idx) => (
                         <tr key={idx} className="hover:bg-slate-500/5">
                           <td className="p-2 border-r border-slate-800/10 font-medium whitespace-nowrap">{lead.name}</td>
+                          <td className="p-2 border-r border-slate-800/10 font-mono whitespace-nowrap">
+                            <div className="flex items-center gap-1.5">
+                              <span className={isDuplicatePhone(lead.phone) ? "text-rose-400 font-semibold" : ""}>
+                                {lead.phone || "N/A"}
+                              </span>
+                              {isDuplicatePhone(lead.phone) && (
+                                <span className="inline-flex items-center gap-0.5 px-1 py-0.2 rounded bg-rose-500/10 text-rose-450 border border-rose-500/15 font-sans font-semibold text-[8px] tracking-tight animate-pulse">
+                                  <AlertCircle size={8} />
+                                  DUPLICATE
+                                </span>
+                              )}
+                            </div>
+                          </td>
                           <td className="p-2 border-r border-slate-800/10 font-mono italic text-[9px] whitespace-nowrap text-teal-400">{lead.projectName || "N/A"}</td>
                           <td className="p-2 border-r border-slate-800/10 whitespace-nowrap">{lead.source}</td>
                           <td className="p-2 border-r border-slate-800/10 font-semibold text-teal-400 whitespace-nowrap">{lead.assignedAgent}</td>
