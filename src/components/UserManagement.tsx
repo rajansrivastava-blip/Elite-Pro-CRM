@@ -191,7 +191,7 @@ export default function UserManagement({
     // Initialize permissions block mock for visual customization
     setEditPermissions({
       canEditLeads: user.role !== "sales_team",
-      canDeleteLeads: user.role === "super_admin",
+      canDeleteLeads: user.role === "super_admin" || user.role === "admin",
       canViewReports: user.role !== "sales_team",
       canSyncSystems: user.role === "super_admin"
     });
@@ -644,7 +644,7 @@ export default function UserManagement({
                             role: val,
                             permissions: {
                               canEditLeads: val !== "sales_team" && val !== "team_leader",
-                              canDeleteLeads: val === "super_admin",
+                              canDeleteLeads: val === "super_admin" || val === "admin",
                               canViewReports: val !== "sales_team",
                               canSyncSystems: val === "super_admin"
                             }
@@ -885,7 +885,7 @@ export default function UserManagement({
                           setEditingUser({ ...editingUser, role: val });
                           setEditPermissions({
                             canEditLeads: val !== "sales_team" && val !== "team_leader",
-                            canDeleteLeads: val === "super_admin",
+                            canDeleteLeads: val === "super_admin" || val === "admin",
                             canViewReports: val !== "sales_team",
                             canSyncSystems: val === "super_admin"
                           });

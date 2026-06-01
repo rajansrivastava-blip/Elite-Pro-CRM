@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { INITIAL_LEADS, INITIAL_APPOINTMENTS, INITIAL_COMMUNICATION_LOGS, SALES_METRICS_HISTORY, PRESET_USERS } from "./data";
-import { Lead, Appointment, CommunicationLog, User, UserRole, LeadEditLog } from "./types";
+import { Lead, Appointment, CommunicationLog, User, UserRole, LeadEditLog, AppNotification } from "./types";
 import Sidebar from "./components/Sidebar";
 import PerformanceDashboard from "./components/PerformanceDashboard";
 import LeadPipeline from "./components/LeadPipeline";
@@ -10,6 +10,8 @@ import SystemSync from "./components/SystemSync";
 import MobileCompanion from "./components/MobileCompanion";
 import LoginPortal from "./components/LoginPortal";
 import UserManagement from "./components/UserManagement";
+import NotificationCenter from "./components/NotificationCenter";
+
 import { 
   checkSupabaseStatus, 
   pushLocalDataToSupabase, 
@@ -108,28 +110,118 @@ export default function App() {
 
   const [currentTab, setCurrentTab] = useState<string>("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+
+  // Notification State
+  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
+    const saved = localStorage.getItem("elite_pro_notifications");
+    if (saved) return JSON.parse(saved);
+    return [
+      {
+        id: "notif-preset-1",
+        recipientName: "Ricky Matharu",
+        title: "New Lead Assigned",
+        message: "High priority lead 'Aarav Sharma' has been registered and assigned to your team from Meta Ad.",
+        source: "Meta Ad",
+        timestamp: "May 25, 2026, 10:15 AM UTC",
+        isRead: false,
+        type: "assignment",
+        leadId: "lead-1"
+      },
+      {
+        id: "notif-preset-2",
+        recipientName: "Kaushal Midha",
+        title: "Fresh Inflow Alert",
+        message: "A website query 'Dev Verma' has been assigned to your workspace. Action required.",
+        source: "Website",
+        timestamp: "May 25, 2026, 11:32 AM UTC",
+        isRead: false,
+        type: "assignment",
+        leadId: "lead-2"
+      },
+      {
+        id: "notif-preset-3",
+        recipientName: "Kunal Wadhwa",
+        title: "IVR Lead Routed",
+        message: "Prospect 'Preeti Patel' called via IVR Board and was routed directly to you.",
+        source: "IVR Board",
+        timestamp: "May 24, 2026, 04:10 PM UTC",
+        isRead: true,
+        type: "sync",
+        leadId: "lead-3"
+      }
+    ];
+  });
+
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     const saved = localStorage.getItem("elite_pro_dark_mode");
     return saved ? JSON.parse(saved) === "true" : false; // Default to eye-comfort clean light mode
   });
 
-  // Hoisted Google Sheets configuration states (prevent state loss when doing other work / switching tabs)
+    // Hoisted Google Sheets configuration states (prevent state loss when doing other work / switching tabs)
   const [sheetUrl, setSheetUrl] = useState<string>(() => localStorage.getItem("google_sheets_sync_url") || "");
   const [sheetRange, setSheetRange] = useState<string>(() => localStorage.getItem("google_sheets_sync_range") || "Sheet1");
   const [autoSheetsSync, setAutoSheetsSync] = useState<boolean>(() => localStorage.getItem("google_sheets_sync_auto") === "true");
   const [lastSheetsSynced, setLastSheetsSynced] = useState<string>(() => localStorage.getItem("google_sheets_last_sync_time") || "Never");
 
+  // Hoisted Meta Ads configuration states
+  const [metaVerifyToken, setMetaVerifyToken] = useState<string>(() => localStorage.getItem("meta_verify_token") || "elite_pro_meta_verify_token_2026");
+  const [metaAutoIngest, setMetaAutoIngest] = useState<boolean>(() => localStorage.getItem("meta_auto_ingest") !== "false");
+  const [lastMetaSynced, setLastMetaSynced] = useState<string>(() => localStorage.getItem("meta_last_synced_time") || "Never");
+
+  const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
+
+  // Load from backend server persistently on mount (to restore sheet url on any device/refresh)
   useEffect(() => {
+    fetch("/api/settings")
+      .then(res => {
+        if (!res.ok) throw new Error("Load failed");
+        return res.json();
+      })
+      .then(data => {
+        if (data) {
+          if (data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
+          if (data.sheetRange !== undefined) setSheetRange(data.sheetRange);
+          if (data.autoSheetsSync !== undefined) setAutoSheetsSync(!!data.autoSheetsSync);
+          if (data.lastSheetsSynced !== undefined) setLastSheetsSynced(data.lastSheetsSynced || "Never");
+          if (data.metaVerifyToken !== undefined) setMetaVerifyToken(data.metaVerifyToken);
+          if (data.metaAutoIngest !== undefined) setMetaAutoIngest(!!data.metaAutoIngest);
+          if (data.lastMetaSynced !== undefined) setLastMetaSynced(data.lastMetaSynced || "Never");
+        }
+        setSettingsLoaded(true);
+      })
+      .catch(err => {
+        console.error("Failed to load server-side settings, falling back to local storage:", err);
+        setSettingsLoaded(true);
+      });
+  }, []);
+
+  // Save config changes both to server and local storage persistently
+  useEffect(() => {
+    if (!settingsLoaded) return;
+
     localStorage.setItem("google_sheets_sync_url", sheetUrl);
-  }, [sheetUrl]);
-
-  useEffect(() => {
     localStorage.setItem("google_sheets_sync_range", sheetRange);
-  }, [sheetRange]);
-
-  useEffect(() => {
     localStorage.setItem("google_sheets_sync_auto", autoSheetsSync ? "true" : "false");
-  }, [autoSheetsSync]);
+    localStorage.setItem("google_sheets_last_sync_time", lastSheetsSynced);
+
+    localStorage.setItem("meta_verify_token", metaVerifyToken);
+    localStorage.setItem("meta_auto_ingest", metaAutoIngest ? "true" : "false");
+    localStorage.setItem("meta_last_synced_time", lastMetaSynced);
+
+    fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sheetUrl,
+        sheetRange,
+        autoSheetsSync,
+        lastSheetsSynced,
+        metaVerifyToken,
+        metaAutoIngest,
+        lastMetaSynced
+      })
+    }).catch(err => console.error("Error saving server settings:", err));
+  }, [sheetUrl, sheetRange, autoSheetsSync, lastSheetsSynced, metaVerifyToken, metaAutoIngest, lastMetaSynced, settingsLoaded]);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncHistory, setSyncHistory] = useState<string[]>([
@@ -376,6 +468,11 @@ export default function App() {
   }, [leadEditLogs]);
 
   useEffect(() => {
+    localStorage.setItem("elite_pro_notifications", JSON.stringify(notifications));
+  }, [notifications]);
+
+
+  useEffect(() => {
     localStorage.setItem("elite_pro_dark_mode", darkMode ? "true" : "false");
   }, [darkMode]);
 
@@ -524,6 +621,27 @@ export default function App() {
     };
     setLeads(prev => [item, ...prev]);
 
+    // Create a notification for the assignee about this new lead assignment
+    if (item.assignedAgent) {
+      const newNotif: AppNotification = {
+        id: "notif-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+        recipientName: item.assignedAgent,
+        title: "New Lead Assigned",
+        message: `Fresh investor lead "${item.name}" from ${item.source} has been assigned to you.`,
+        source: item.source,
+        timestamp: new Date().toLocaleString("en-US", { 
+          timeStyle: "short", 
+          dateStyle: "medium"
+        }),
+        isRead: false,
+        type: "assignment",
+        leadId: id,
+        leadName: item.name
+      };
+      setNotifications(prev => [newNotif, ...prev]);
+    }
+
+
     // Also auto-generate general appointment follow-up for tomorrow relative to local time (today: 2026-05-25)
     // to protect leads followups as requested: "Also, set reminder so that sales team can easily manage..."
     const tomorrow = new Date();
@@ -546,12 +664,13 @@ export default function App() {
 
     // Perform background db sync (only if Auto-Sync is enabled)
     if (isAutoSyncEnabled) {
-      const [leadRes, apptRes] = await Promise.all([
-        dbUpsertLead(item),
-        dbUpsertAppointment(automaticAppt)
-      ]);
-
-      if (!leadRes.success) {
+      const leadRes = await dbUpsertLead(item);
+      if (leadRes.success) {
+        const apptRes = await dbUpsertAppointment(automaticAppt);
+        if (!apptRes.success) {
+          console.warn("Supabase Appointment Sync failed:", apptRes.error);
+        }
+      } else {
         console.warn("Supabase Lead Sync failed:", leadRes.error);
         triggerAlert(
           "Supabase Synchronization Warned",
@@ -600,6 +719,33 @@ export default function App() {
     setLeads(prev => [...newItems, ...prev]);
     setAppointments(prev => [...newAppts, ...prev]);
 
+    // Create notifications for assigned agents
+    const rawBulkNotifs: AppNotification[] = [];
+    newItems.forEach(item => {
+      if (item.assignedAgent) {
+        rawBulkNotifs.push({
+          id: "notif-" + Math.random().toString(36).substr(2, 5) + "-" + Date.now(),
+          recipientName: item.assignedAgent,
+          title: "New Lead Assigned",
+          message: `Lead "${item.name}" from ${item.source} has been imported & assigned to you.`,
+          source: item.source,
+          timestamp: new Date().toLocaleString("en-US", { 
+            timeStyle: "short", 
+            dateStyle: "medium"
+          }),
+          isRead: false,
+          type: "assignment",
+          leadId: item.id,
+          leadName: item.name
+        });
+      }
+    });
+
+    if (rawBulkNotifs.length > 0) {
+      setNotifications(prev => [...rawBulkNotifs, ...prev]);
+    }
+
+
     // Push each newly registered lead to Supabase (only if Auto-Sync is enabled in local state or storage)
     const isSyncActiveCombined = isAutoSyncEnabled || localStorage.getItem("elite_pro_auto_sync") !== "false";
     if (isSyncActiveCombined) {
@@ -624,6 +770,11 @@ export default function App() {
   useEffect(() => {
     leadsRef.current = leads;
   }, [leads]);
+
+  const usersRef = useRef(users);
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
 
   const handleBulkAddLeadsRef = useRef(handleBulkAddLeads);
   useEffect(() => {
@@ -658,7 +809,7 @@ export default function App() {
           const { fetchGoogleSheetValues, mapSpreadsheetRowsToLeads } = await import("./googleAuth");
           const rows = await fetchGoogleSheetValues(sheetUrlVal, sheetRangeVal, token);
           if (rows && rows.length >= 2) {
-            const parsedLeads = mapSpreadsheetRowsToLeads(rows);
+            const parsedLeads = mapSpreadsheetRowsToLeads(rows, usersRef.current || []);
             if (parsedLeads.length > 0) {
               const existingLeadsSet = new Set(
                 leadsRef.current.map(l => {
@@ -701,9 +852,71 @@ export default function App() {
     };
   }, []);
 
+  const metaAutoIngestRef = useRef(metaAutoIngest);
+  useEffect(() => {
+    metaAutoIngestRef.current = metaAutoIngest;
+  }, [metaAutoIngest]);
+
+  // Background Meta Ads Leads Inbound sync Loop
+  useEffect(() => {
+    const runMetaBackgroundSync = async () => {
+      const isAuto = metaAutoIngestRef.current;
+      if (!isAuto) return;
+
+      try {
+        const response = await fetch("/api/meta-ads/incoming-leads");
+        if (!response.ok) return;
+        const data = await response.json();
+
+        if (data && data.leads && data.leads.length > 0) {
+          const incoming = data.leads;
+          
+          // Filter out duplicates
+          const currentLeads = leadsRef.current;
+          const filteredIncoming = incoming.filter((inc: any) => {
+            return !currentLeads.some((l) => l.id === inc.id || (inc.phone && l.phone === inc.phone));
+          });
+
+          if (filteredIncoming.length > 0) {
+            // Append them to state!
+            setLeads((prev) => [...filteredIncoming, ...prev]);
+
+            // Set timestamps
+            const updatedTime = new Date().toLocaleTimeString("en-US", { hour12: true }) + " (Local)";
+            setLastMetaSynced(updatedTime);
+            localStorage.setItem("meta_last_synced_time", updatedTime);
+
+            // Log synchronized action
+            const logMsg = `[Meta Webhook Sync] Automatically ingested ${filteredIncoming.length} new lead(s) set to 'Pending Assignment'.`;
+            console.log(logMsg);
+            
+            // Log this sync event to Sync history
+            setSyncHistory(prev => [
+              `${new Date().toISOString().replace('T', ' ').substring(0,19)} GMT - Ingested ${filteredIncoming.length} Meta Ad Leads`,
+              ...prev
+            ]);
+            
+            // Dispatch a window event to trigger reactive announcements if listening
+            if (window.dispatchEvent) {
+              window.dispatchEvent(new CustomEvent("meta-lead-received", { detail: filteredIncoming }));
+            }
+          }
+        }
+      } catch (err) {
+        console.warn("[Meta Background-Sync Interrupted]:", err);
+      }
+    };
+
+    // run sync every 15 seconds for snappier real-time experience
+    const intervalId = setInterval(runMetaBackgroundSync, 15000);
+    return () => clearInterval(intervalId);
+  }, []);
+
   // Handler: Update Lead
   const handleUpdateLead = async (updated: Lead) => {
     const oldLead = leads.find(l => l.id === updated.id);
+    let newLog: LeadEditLog | null = null;
+    
     if (oldLead && currentUser) {
       const changes: { field: string; oldValue: string; newValue: string }[] = [];
       const fieldsToTrack: (keyof Lead)[] = [
@@ -722,9 +935,29 @@ export default function App() {
          }
       });
 
+      // Create an assignment notification if the assignee value has changed
+      if (oldLead.assignedAgent.toLowerCase() !== updated.assignedAgent.toLowerCase() && updated.assignedAgent) {
+        const newNotif: AppNotification = {
+          id: "notif-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+          recipientName: updated.assignedAgent,
+          title: "New Lead Reassigned",
+          message: `Investor lead "${updated.name}" has been reassigned to you by ${currentUser.name}.`,
+          source: updated.source,
+          timestamp: new Date().toLocaleString("en-US", { 
+            timeStyle: "short", 
+            dateStyle: "medium"
+          }),
+          isRead: false,
+          type: "assignment",
+          leadId: updated.id,
+          leadName: updated.name
+        };
+        setNotifications(prev => [newNotif, ...prev]);
+      }
+
       // Create an edit log if there are alterations
       if (changes.length > 0) {
-        const newLog: LeadEditLog = {
+        newLog = {
           id: "edit-log-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
           leadId: updated.id,
           leadName: updated.name,
@@ -737,13 +970,11 @@ export default function App() {
           }) + " UTC",
           changes
         };
-        setLeadEditLogs(prev => [newLog, ...prev]);
-        if (isAutoSyncEnabled) {
-          dbUpsertLeadEditLog(newLog);
-        }
+        setLeadEditLogs(prev => [newLog!, ...prev]);
       }
     }
     setLeads(prev => prev.map(l => l.id === updated.id ? updated : l));
+
 
     if (isAutoSyncEnabled) {
       const res = await dbUpsertLead(updated);
@@ -753,6 +984,11 @@ export default function App() {
           "Supabase Update Failure",
           `Changes saved locally, but failed to sync online to Supabase.\n\nDatabase Error: "${res.error || "Permission Denied / Missing Table 'leads'"}"`
         );
+      } else if (newLog) {
+        const editLogRes = await dbUpsertLeadEditLog(newLog);
+        if (!editLogRes.success) {
+          console.warn("Lead edit log sync failed on Supabase:", editLogRes.error);
+        }
       }
     }
   };
@@ -760,10 +996,10 @@ export default function App() {
   // Handler: Delete Lead
   const handleDeleteLead = (id: string) => {
     // Role-based Access Control authorization filter
-    if (currentUser?.role !== "super_admin") {
+    if (currentUser?.role !== "super_admin" && currentUser?.role !== "admin") {
       triggerAlert(
         "Access Refused",
-        `Full hard removal of real-estate lead portfolios requires [Super Admin] authority. Your current role [${currentUser?.role?.replace('_', ' ').toUpperCase()}] does not possess this permit.`
+        `Full hard removal of real-estate lead portfolios requires [Super Admin] or [Admin] authority. Your current role [${currentUser?.role?.replace('_', ' ').toUpperCase()}] does not possess this permit.`
       );
       return;
     }
@@ -798,6 +1034,13 @@ export default function App() {
     setAppointments(prev => [item, ...prev]);
 
     if (isAutoSyncEnabled) {
+      const parentLead = leads.find(l => l.id === item.leadId);
+      if (parentLead) {
+        const leadRes = await dbUpsertLead(parentLead);
+        if (!leadRes.success) {
+          console.warn("Failed to sync parent lead before adding appointment:", leadRes.error);
+        }
+      }
       const res = await dbUpsertAppointment(item);
       if (!res.success) {
         console.warn("Appointment creation failed on Supabase:", res.error);
@@ -814,6 +1057,13 @@ export default function App() {
     setAppointments(prev => prev.map(a => a.id === updated.id ? updated : a));
 
     if (isAutoSyncEnabled) {
+      const parentLead = leads.find(l => l.id === updated.leadId);
+      if (parentLead) {
+        const leadRes = await dbUpsertLead(parentLead);
+        if (!leadRes.success) {
+          console.warn("Failed to sync parent lead before updating appointment:", leadRes.error);
+        }
+      }
       const res = await dbUpsertAppointment(updated);
       if (!res.success) {
         console.warn("Appointment updates failed on Supabase:", res.error);
@@ -866,6 +1116,13 @@ export default function App() {
     setIsMobileModeActive(true); // Signal activity state icon on companion mobile sidebar
     
     if (isAutoSyncEnabled) {
+      const parentLead = leads.find(l => l.id === item.leadId);
+      if (parentLead) {
+        const leadRes = await dbUpsertLead(parentLead);
+        if (!leadRes.success) {
+          console.warn("Failed to sync parent lead before adding communication log:", leadRes.error);
+        }
+      }
       const res = await dbUpsertCommunicationLog(item);
       if (!res.success) {
         console.warn("Communication log sync failed on Supabase:", res.error);
@@ -1016,6 +1273,8 @@ export default function App() {
           <AppointmentsList
             appointments={visibleAppointments}
             leads={visibleLeads}
+            users={users}
+            currentUser={currentUser}
             onAddAppointment={handleAddAppointment}
             onUpdateAppointment={handleUpdateAppointment}
             onDeleteAppointment={handleDeleteAppointment}
@@ -1032,6 +1291,7 @@ export default function App() {
       case "integrations":
         return (
           <SystemSync
+            currentUser={currentUser}
             darkMode={darkMode}
             isSyncing={isSyncing}
             onTriggerSync={handleMasterSynchronization}
@@ -1057,6 +1317,12 @@ export default function App() {
             setAutoSheetsSync={setAutoSheetsSync}
             lastSheetsSynced={lastSheetsSynced}
             setLastSheetsSynced={setLastSheetsSynced}
+            metaVerifyToken={metaVerifyToken}
+            setMetaVerifyToken={setMetaVerifyToken}
+            metaAutoIngest={metaAutoIngest}
+            setMetaAutoIngest={setMetaAutoIngest}
+            lastMetaSynced={lastMetaSynced}
+            setLastMetaSynced={setLastMetaSynced}
           />
         );
       case "users":
@@ -1201,6 +1467,36 @@ export default function App() {
                   <span className="hidden sm:inline">{todayRemindersCount} Alignment Reminders Due Today</span>
                   <span className="sm:hidden">{todayRemindersCount} Due</span>
                 </button>
+              )}
+
+              {/* Notification Bell Component */}
+              {currentUser && (
+                <NotificationCenter
+                  notifications={notifications}
+                  currentUser={currentUser}
+                  onMarkAsRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n))}
+                  onMarkAllAsRead={() => setNotifications(prev => prev.map(n => {
+                    const isPrivileged = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
+                    if (isPrivileged || n.recipientName.toLowerCase() === currentUser.name.toLowerCase()) {
+                      return { ...n, isRead: true };
+                    }
+                    return n;
+                  }))}
+                  onClearAll={() => {
+                    const isPrivileged = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
+                    if (isPrivileged) {
+                      setNotifications([]);
+                    } else {
+                      setNotifications(prev => prev.filter(n => n.recipientName.toLowerCase() !== currentUser?.name.toLowerCase()));
+                    }
+                  }}
+                  onNavigateToLead={(leadId) => {
+                    setCurrentTab("leads");
+                    localStorage.setItem("elite_pro_search_lead_highlight", leadId);
+                    window.dispatchEvent(new CustomEvent("elite_pro_focus_lead", { detail: { leadId } }));
+                  }}
+                  darkMode={darkMode}
+                />
               )}
 
               {/* Dynamic current user badge */}

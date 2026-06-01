@@ -149,7 +149,13 @@ export default function PerformanceDashboard({
   // Calculate total pipeline value from active and won budgets
   const parseBudgetValue = (b: string): number => {
     if (!b) return 0;
-    const cleaned = b.replace(/[₹$cr\sM]/gi, "");
+    const sanitized = b
+      .replace(/â\u0082¹/g, "₹")
+      .replace(/â‚¹/g, "₹")
+      .replace(/â\u0082/g, "₹")
+      .replace(/â\u0092¹/g, "₹")
+      .replace(/â\u0092/g, "₹");
+    const cleaned = sanitized.replace(/[₹$cr\sM]/gi, "");
     const val = parseFloat(cleaned);
     if (!isNaN(val)) {
       if (b.toLowerCase().includes("lakh") || b.toLowerCase().includes("l")) {

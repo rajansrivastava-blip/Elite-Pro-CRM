@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Lead, CommunicationLog, User, LeadEditLog } from "../types";
 import * as XLSX from "xlsx";
 import { 
@@ -27,7 +27,8 @@ import {
   History,
   UserCheck,
   Upload,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Download
 } from "lucide-react";
 
 interface LeadPipelineProps {
@@ -87,7 +88,134 @@ export default function LeadPipeline({
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [temperatureFilter, setTemperatureFilter] = useState<string>("all");
+  const [startDate, setStartDate] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
   const [showLogs, setShowLogs] = useState(false);
+
+  // Expanded dynamic filters (Project, Location, Budget, TL / Advisor wise)
+  const [leadProjectFilter, setLeadProjectFilter] = useState<string>("all");
+  const [leadLocationFilter, setLeadLocationFilter] = useState<string>("all");
+  const [leadBudgetFilter, setLeadBudgetFilter] = useState<string>("all");
+
+  const [leadProjectSearchQuery, setLeadProjectSearchQuery] = useState<string>("");
+  const [leadLocationSearchQuery, setLeadLocationSearchQuery] = useState<string>("");
+  const [leadBudgetMinQuery, setLeadBudgetMinQuery] = useState<string>("");
+  const [leadBudgetMaxQuery, setLeadBudgetMaxQuery] = useState<string>("");
+
+  const [leadSelectedTL, setLeadSelectedTL] = useState<string>(() => {
+    if (currentUser && currentUser.role === "team_leader") {
+      return currentUser.id;
+    }
+    return "all";
+  });
+  const [leadSelectedAgentName, setLeadSelectedAgentName] = useState<string>("all");
+
+  // Handle notification focus redirection
+  useEffect(() => {
+    const handleFocusLead = (e: Event) => {
+      const customEvent = e as CustomEvent<{ leadId: string }>;
+      if (customEvent.detail && customEvent.detail.leadId) {
+        const leadId = customEvent.detail.leadId;
+        const targetLead = leads.find(l => l.id === leadId);
+        if (targetLead) {
+          setSearchTerm(targetLead.name);
+          setStatusFilter("all");
+          setSourceFilter("all");
+          setTemperatureFilter("all");
+          setLeadProjectFilter("all");
+          setLeadLocationFilter("all");
+          setLeadBudgetFilter("all");
+          setLeadSelectedTL("all");
+          setLeadSelectedAgentName("all");
+        }
+      }
+    };
+
+    window.addEventListener("elite_pro_focus_lead", handleFocusLead);
+    
+    // Check if there is a pending highlight from fresh navigation
+    const pendingHighlight = localStorage.getItem("elite_pro_search_lead_highlight");
+    if (pendingHighlight) {
+      const targetLead = leads.find(l => l.id === pendingHighlight);
+      if (targetLead) {
+        setSearchTerm(targetLead.name);
+        setStatusFilter("all");
+        setSourceFilter("all");
+        setTemperatureFilter("all");
+        setLeadProjectFilter("all");
+        setLeadLocationFilter("all");
+        setLeadBudgetFilter("all");
+        setLeadSelectedTL("all");
+        setLeadSelectedAgentName("all");
+      }
+      localStorage.removeItem("elite_pro_search_lead_highlight");
+    }
+
+    return () => {
+      window.removeEventListener("elite_pro_focus_lead", handleFocusLead);
+    };
+  }, [leads]);
+
+
+  // Dynamic lists of unique values from visible leads for filter selects
+  const leadProjectsPool = useMemo(() => {
+    const leadNames = new Set(leads.map(l => l.name.toLowerCase().trim()));
+    const userNames = new Set((users || []).map(u => u.name.toLowerCase().trim()));
+    return Array.from(new Set(leads.map(l => l.projectName || "").filter(Boolean)))
+      .filter(proj => {
+        const projLower = proj.toLowerCase().trim();
+        return !leadNames.has(projLower) && !userNames.has(projLower);
+      })
+      .sort();
+  }, [leads, users]);
+
+  const leadLocationsPool = useMemo(() => {
+    return Array.from(new Set(leads.map(l => l.location || "").filter(Boolean))).sort();
+  }, [leads]);
+
+  const leadBudgetsPool = useMemo(() => {
+    return Array.from(new Set(leads.map(l => l.budget || "").filter(Boolean))).sort();
+  }, [leads]);
+
+  // Extract TL lists
+  const leadTLUsers = useMemo(() => {
+    if (!users) return [];
+    return users.filter(u => u.role === "team_leader");
+  }, [users]);
+
+  // Extract Sales Advisors options
+  const leadSalesUsersOptions = useMemo(() => {
+    if (!users || !currentUser) return [];
+    
+    let eligibleSales: User[] = [];
+    if (currentUser.role === "super_admin" || currentUser.role === "admin") {
+      if (leadSelectedTL === "all") {
+        eligibleSales = users.filter(u => u.role === "sales_team");
+      } else {
+        eligibleSales = users.filter(u => u.role === "sales_team" && u.teamLeaderId === leadSelectedTL);
+      }
+    } else if (currentUser.role === "team_leader") {
+      eligibleSales = users.filter(u => u.role === "sales_team" && u.teamLeaderId === currentUser.id);
+    }
+    
+    // Add TL themselves to the list
+    const pool = [...eligibleSales];
+    if (currentUser.role === "team_leader") {
+      pool.unshift(currentUser);
+    } else if (leadSelectedTL !== "all") {
+      const selectedTLUser = users.find(u => u.id === leadSelectedTL);
+      if (selectedTLUser) {
+        pool.unshift(selectedTLUser);
+      }
+    }
+    return pool;
+  }, [users, currentUser, leadSelectedTL]);
+
+  // Handler to sync resetting selected agent of TL filters properly
+  const handleLeadTLChange = (tlId: string) => {
+    setLeadSelectedTL(tlId);
+    setLeadSelectedAgentName("all");
+  };
   
   // Modal / Form States
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -103,9 +231,9 @@ export default function LeadPipeline({
 
   // Download CSV Template function
   const downloadImportTemplate = () => {
-    const csvContent = "CUSTOMER NAME,PROJECT NAME,EMAIL ADDRESS,PHONE NUMBER,LEAD SOURCE,PHYSICAL LOCATION,LEAD STATUS,LEAD PRIORITY,BUDGET,NOTES (CONSULTATION SYNOPSIS BRIEF)\n" +
-      "Rajesh Kumar,Apex Net-Zero Warehouse,rajesh@gmail.com,9876543210,Google Ad,Delhi NCR,Interested,Hot,₹15 Cr,Looking for warehouse space with highway connectivity.\n" +
-      "Heena Sharma,Vortex Hyper-scale DC,heena.sharma@corp.com,9988776655,Meta Ad,Bangalore,Follow Up,Warm,₹45 Cr,Seeking 30MW redundant grid architecture solar sync.";
+    const csvContent = "CUSTOMER NAME,PROJECT NAME,EMAIL ADDRESS,PHONE NUMBER,LEAD SOURCE,PHYSICAL LOCATION,LEAD STATUS,LEAD PRIORITY,BUDGET,NOTES (CONSULTATION SYNOPSIS BRIEF),ASSIGN AGENT\n" +
+      "Rajesh Kumar,Apex Net-Zero Warehouse,rajesh@gmail.com,9876543210,Google Ad,Delhi NCR,Interested,Hot,₹15 Cr,Looking for warehouse space with highway connectivity.,Prabhjot Singh\n" +
+      "Heena Sharma,Vortex Hyper-scale DC,heena.sharma@corp.com,9988776655,Meta Ad,Bangalore,Follow Up,Warm,₹45 Cr,Seeking 30MW redundant grid architecture solar sync.,Admin";
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -114,6 +242,53 @@ export default function LeadPipeline({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Download filtered leads as Excel spreadsheet for Admin & Super Admin
+  const handleDownloadExcel = () => {
+    if (!filteredLeads || filteredLeads.length === 0) return;
+
+    // Convert lead fields into professional Excel columns
+    const excelRows = filteredLeads.map(lead => ({
+      "Customer Name": lead.name,
+      "Corporate Group": lead.company || "N/A",
+      "Executive Title": lead.position || "N/A",
+      "Email Address": lead.email,
+      "Contact Number": lead.phone,
+      "Lead Source Route": lead.source,
+      "Pipeline Stage": lead.status,
+      "Intent Temperature": lead.temperature,
+      "Capital Budget Range": lead.budget,
+      "Physical Location": lead.location || "N/A",
+      "Project Complex / Interest": lead.projectName || "N/A",
+      "Assigned Advisor": lead.assignedAgent,
+      "Lead Priority Score": lead.score || "N/A",
+      "Lead Profile Notes": lead.notes || "",
+      "Acquisition Date": lead.dateCreated ? lead.dateCreated.substring(0, 10) : "",
+      "Recent Update Time": lead.dateUpdated ? lead.dateUpdated.substring(0, 10) : ""
+    }));
+
+    // Generate XLSX workbook & download it beautifully
+    const worksheet = XLSX.utils.json_to_sheet(excelRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Filtered Portfolio Leads");
+
+    // Adjust column widths automatically based on value lengths
+    const maxLengths = Object.keys(excelRows[0] || {}).map(key => {
+      let maxLen = key.length;
+      excelRows.forEach(row => {
+        const val = String((row as any)[key] || "");
+        if (val.length > maxLen) {
+          maxLen = val.length;
+        }
+      });
+      return { wch: Math.min(Math.max(maxLen + 2, 10), 40) }; // clamp between 10 and 40 characters wide
+    });
+    worksheet["!cols"] = maxLengths;
+
+    // Trigger local client file download
+    const dateStr = new Date().toISOString().substring(0, 10);
+    XLSX.writeFile(workbook, `ElitePro_Filtered_Leads_${dateStr}.xlsx`);
   };
 
   // Process CSV/Excel
@@ -128,7 +303,7 @@ export default function LeadPipeline({
         const data = e.target?.result;
         if (!data) throw new Error("Could not read file data.");
 
-        const workbook = XLSX.read(data, { type: "binary" });
+        const workbook = XLSX.read(data, { type: "array" });
         const firstSheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[firstSheetName];
         
@@ -153,6 +328,7 @@ export default function LeadPipeline({
         const priorityIdx = headers.findIndex((h: string) => h === "priority" || h.includes("priority") || h.includes("lead priority") || h === "temperature" || h.includes("temp"));
         const budgetIdx = headers.findIndex((h: string) => h === "budget" || h.includes("budget") || h.includes("capital budget"));
         const notesIdx = headers.findIndex((h: string) => h === "notes" || h.includes("notes") || h.includes("consultation synopsis") || h === "synopsis" || h.includes("consultation synopsis brief"));
+        const agentIdx = headers.findIndex((h: string) => h === "agent" || h.includes("assign agent") || h.includes("assigned agent") || h === "assignedagent" || h === "advisor" || h.includes("assign to") || h === "salesperson" || h === "representative" || h === "owner" || h === "name name" || h === "assigned agent name");
 
         if (nameIdx === -1) {
           throw new Error("Missing critical header mapping: 'CUSTOMER NAME' column is required.");
@@ -174,7 +350,14 @@ export default function LeadPipeline({
           const rawLoc = locationIdx !== -1 && row[locationIdx] !== undefined ? String(row[locationIdx]).trim() : "Noida, India";
           const rawStatusStr = statusIdx !== -1 && row[statusIdx] !== undefined ? String(row[statusIdx]).trim() : "Interested";
           const rawPriorityStr = priorityIdx !== -1 && row[priorityIdx] !== undefined ? String(row[priorityIdx]).trim() : "Warm";
-          const rawBudget = budgetIdx !== -1 && row[budgetIdx] !== undefined ? String(row[budgetIdx]).trim() : "₹1.0 Cr";
+          let rawBudget = budgetIdx !== -1 && row[budgetIdx] !== undefined ? String(row[budgetIdx]).trim() : "₹1.0 Cr";
+          // Sanitize corrupted UTF-8 sequences for Hindi Rupee symbol (₹)
+          rawBudget = rawBudget
+            .replace(/â\u0082¹/g, "₹")
+            .replace(/â¹/g, "₹")
+            .replace(/â\u0082/g, "₹")
+            .replace(/â\u0092¹/g, "₹")
+            .replace(/â\u0092/g, "₹");
           const rawNotes = notesIdx !== -1 && row[notesIdx] !== undefined ? String(row[notesIdx]).trim() : "";
 
           // Match Source safely
@@ -205,8 +388,25 @@ export default function LeadPipeline({
           const scoreMap: Record<string, number> = { "Hot": 90, "Warm": 65, "Cold": 30, "Dead": 5 };
           const finalScore = scoreMap[finalTemperature] || 50;
 
-          // Ensure automatic assignment is bound exactly to owner/importing client account:
-          const finalAdvisor = currentUser?.name || "Rajan Srivastava";
+          // Automatically assign to matching Sales Team or TL, otherwise fallback to "Admin"
+          let finalAdvisor = "Admin";
+          let localAssignmentMatched = false;
+
+          if (agentIdx !== -1 && row[agentIdx] !== undefined) {
+            const rawAgentName = String(row[agentIdx]).trim();
+            if (rawAgentName) {
+              const matchedUser = (users || []).find(u => (u.name || "").toLowerCase().trim() === rawAgentName.toLowerCase().trim());
+              if (matchedUser && (matchedUser.role === "sales_team" || matchedUser.role === "team_leader" || matchedUser.role === "admin")) {
+                finalAdvisor = matchedUser.name;
+                localAssignmentMatched = true;
+              }
+            }
+          }
+
+          if (!localAssignmentMatched) {
+            // Unspecified or unmatched columns: default to Admin if uploaded by admin, else local user
+            finalAdvisor = currentUser?.role === "super_admin" || currentUser?.role === "admin" ? "Admin" : (currentUser?.name || "Admin");
+          }
 
           parsedLeads.push({
             name: rawName,
@@ -218,7 +418,7 @@ export default function LeadPipeline({
             status: finalStatus,
             temperature: finalTemperature,
             budget: rawBudget,
-            assignedAgent: finalAdvisor, // Set to self
+            assignedAgent: finalAdvisor,
             notes: rawNotes ? rawNotes : "Imported via spreadsheet batch ingestion.",
             score: finalScore,
           });
@@ -239,7 +439,7 @@ export default function LeadPipeline({
       setImportError("Error occurred reading this file.");
     };
 
-    reader.readAsBinaryString(file);
+    reader.readAsArrayBuffer(file);
   };
 
   // Drag handlers
@@ -339,19 +539,149 @@ export default function LeadPipeline({
     currentUser.role === "admin" ||
     currentUser.role === "team_leader";
 
-  const filteredLeads = leads.filter(lead => {
-    const matchesSearch = 
-      lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (lead.company || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.source.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      lead.assignedAgent.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === "all" || lead.status === statusFilter;
-    const matchesSource = sourceFilter === "all" || lead.source === sourceFilter;
-    const matchesTemperature = temperatureFilter === "all" || lead.temperature === temperatureFilter;
-    
-    return matchesSearch && matchesStatus && matchesSource && matchesTemperature;
-  });
+  const filteredLeads = useMemo(() => {
+    const list = leads.filter(lead => {
+      const matchesSearch = 
+        lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (lead.company || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        lead.source.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        lead.assignedAgent.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesStatus = statusFilter === "all" || lead.status === statusFilter;
+      const matchesSource = sourceFilter === "all" || lead.source === sourceFilter;
+      const matchesTemperature = temperatureFilter === "all" || lead.temperature === temperatureFilter;
+      
+      let matchesStartDate = true;
+      if (startDate) {
+        // Compare YYYY-MM-DD strings directly
+        matchesStartDate = (lead.dateCreated || "") >= startDate;
+      }
+      
+      let matchesEndDate = true;
+      if (endDate) {
+        matchesEndDate = (lead.dateCreated || "") <= endDate;
+      }
+
+      // 1. Project Filter
+      let matchesProject = leadProjectFilter === "all" || 
+        (lead.projectName || "").toLowerCase() === leadProjectFilter.toLowerCase();
+      if (matchesProject && leadProjectSearchQuery.trim() !== "") {
+        matchesProject = (lead.projectName || "").toLowerCase().includes(leadProjectSearchQuery.trim().toLowerCase());
+      }
+
+      // 2. Location Filter
+      let matchesLocation = leadLocationFilter === "all" || 
+        (lead.location || "").toLowerCase() === leadLocationFilter.toLowerCase();
+      if (matchesLocation && leadLocationSearchQuery.trim() !== "") {
+        matchesLocation = (lead.location || "").toLowerCase().includes(leadLocationSearchQuery.trim().toLowerCase());
+      }
+
+      // 3. Budget Filter
+      let matchesBudget = leadBudgetFilter === "all" || 
+        (lead.budget || "").toLowerCase() === leadBudgetFilter.toLowerCase();
+      
+      // Parse budget value comfortably to check range constraints
+      if (matchesBudget && (leadBudgetMinQuery.trim() !== "" || leadBudgetMaxQuery.trim() !== "")) {
+        const parseBudgetValueLocal = (b: string): number => {
+          if (!b) return 0;
+          const sanitized = b
+            .replace(/â\u0082¹/g, "₹")
+            .replace(/â‚¹/g, "₹")
+            .replace(/â\u0082/g, "₹")
+            .replace(/â\u0092¹/g, "₹")
+            .replace(/â\u0092/g, "₹");
+          const cleaned = sanitized.replace(/[₹$cr\sM]/gi, "");
+          const parseFloatVal = parseFloat(cleaned);
+          if (!isNaN(parseFloatVal)) {
+            if (b.toLowerCase().includes("lakh") || b.toLowerCase().includes("l")) {
+              return parseFloatVal / 100; // normalize
+            }
+            return parseFloatVal;
+          }
+          return 0;
+        };
+
+        const leadNum = parseBudgetValueLocal(lead.budget || "");
+        if (leadBudgetMinQuery.trim() !== "") {
+          const minNum = parseFloat(leadBudgetMinQuery);
+          if (!isNaN(minNum) && leadNum < minNum) {
+            matchesBudget = false;
+          }
+        }
+        if (leadBudgetMaxQuery.trim() !== "") {
+          const maxNum = parseFloat(leadBudgetMaxQuery);
+          if (!isNaN(maxNum) && leadNum > maxNum) {
+            matchesBudget = false;
+          }
+        }
+      }
+
+      // 4. TL / Sales Advisor Filter (Admin/Super Admin / TL and Sales Team)
+      let matchesTLSales = true;
+      if (users && users.length > 0) {
+        const agentUser = users.find(u => u.name.toLowerCase() === lead.assignedAgent.toLowerCase());
+        
+        // Team Leader Filter Check
+        if (leadSelectedTL !== "all") {
+          if (!agentUser) {
+            matchesTLSales = false;
+          } else {
+            const isAgentThatTL = agentUser.role === 'team_leader' && agentUser.id === leadSelectedTL;
+            const isUnderThatTL = agentUser.teamLeaderId === leadSelectedTL;
+            if (!isAgentThatTL && !isUnderThatTL) {
+              matchesTLSales = false;
+            }
+          }
+        }
+
+        // Sales Advisor / Agent name Filter Check
+        if (matchesTLSales && leadSelectedAgentName !== "all") {
+          if (lead.assignedAgent.toLowerCase() !== leadSelectedAgentName.toLowerCase()) {
+            matchesTLSales = false;
+          }
+        }
+      }
+      
+      return matchesSearch && 
+        matchesStatus && 
+        matchesSource && 
+        matchesTemperature && 
+        matchesStartDate && 
+        matchesEndDate &&
+        matchesProject &&
+        matchesLocation &&
+        matchesBudget &&
+        matchesTLSales;
+    });
+
+    // Display recent date first (most recently created first)
+    return [...list].sort((a, b) => {
+      const dateA = a.dateCreated || "";
+      const dateB = b.dateCreated || "";
+      if (dateA !== dateB) {
+        return dateB.localeCompare(dateA);
+      }
+      return (b.dateUpdated || "").localeCompare(a.dateUpdated || "");
+    });
+  }, [
+    leads, 
+    searchTerm, 
+    statusFilter, 
+    sourceFilter, 
+    temperatureFilter, 
+    startDate, 
+    endDate,
+    leadProjectFilter,
+    leadProjectSearchQuery,
+    leadLocationFilter,
+    leadLocationSearchQuery,
+    leadBudgetFilter,
+    leadBudgetMinQuery,
+    leadBudgetMaxQuery,
+    leadSelectedTL,
+    leadSelectedAgentName,
+    users
+  ]);
 
   // Handle addition
   const handleAddNewLead = (e: React.FormEvent) => {
@@ -461,6 +791,16 @@ export default function LeadPipeline({
       setSelectedLeadForAI(null);
       setEmailNotes("");
     }, 2000);
+  };
+
+  const formatBudgetSafely = (b: string | undefined): string => {
+    if (!b) return "N/A";
+    return b
+      .replace(/â\u0082¹/g, "₹")
+      .replace(/â‚¹/g, "₹")
+      .replace(/â\u0082/g, "₹")
+      .replace(/â\u0092¹/g, "₹")
+      .replace(/â\u0092/g, "₹");
   };
 
   // Helper colors for Lead status badges
@@ -679,12 +1019,369 @@ export default function LeadPipeline({
             </select>
           </div>
 
+          {/* Dynamic Portfolio and Team Hierarchy Filters */}
+          <div className={`p-4 rounded-xl border flex flex-col gap-4 sm:col-span-2 lg:col-span-5 transition duration-200
+            ${darkMode ? "bg-slate-900/60 border-slate-800/80" : "bg-slate-150/30 border-slate-200"}`}
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className={`text-[10px] font-bold uppercase tracking-wider font-mono flex items-center gap-1.5 ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
+                <Filter size={13} className="text-teal-500" />
+                Corporate Portfolio Filters:
+              </span>
+              
+              {/* Reset trigger */}
+              {(leadProjectFilter !== "all" || 
+                leadLocationFilter !== "all" || 
+                leadBudgetFilter !== "all" || 
+                leadSelectedTL !== "all" || 
+                leadSelectedAgentName !== "all" ||
+                leadProjectSearchQuery !== "" ||
+                leadLocationSearchQuery !== "" ||
+                leadBudgetMinQuery !== "" ||
+                leadBudgetMaxQuery !== "") && (
+                <button
+                  type="button"
+                  id="reset-portfolio-filters-btn"
+                  onClick={() => {
+                    setLeadProjectFilter("all");
+                    setLeadLocationFilter("all");
+                    setLeadBudgetFilter("all");
+                    setLeadProjectSearchQuery("");
+                    setLeadLocationSearchQuery("");
+                    setLeadBudgetMinQuery("");
+                    setLeadBudgetMaxQuery("");
+                    if (currentUser?.role === "super_admin" || currentUser?.role === "admin") {
+                      setLeadSelectedTL("all");
+                    }
+                    setLeadSelectedAgentName("all");
+                  }}
+                  className="px-2.5 py-1 text-[10px] font-bold uppercase font-mono tracking-wider rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition active:scale-95 self-start sm:self-auto"
+                >
+                  <X size={10} className="mr-0.5 inline" />
+                  Reset Portfolio Filters
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              
+              {/* Team Leader Filter select */}
+              {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") ? (
+                <div className="relative">
+                  <select
+                    id="lead-pipeline-tl-filter"
+                    value={leadSelectedTL}
+                    onChange={(e) => handleLeadTLChange(e.target.value)}
+                    className={`w-full px-3.5 py-2 text-xs font-semibold rounded-lg border cursor-pointer appearance-none outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition
+                      ${darkMode 
+                        ? "bg-slate-950 border-slate-800 text-slate-205" 
+                        : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                  >
+                    <option value="all">📂 (All Team Leaders)</option>
+                    {leadTLUsers.map(user => (
+                      <option key={user.id} value={user.id}>
+                        👔 {user.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                currentUser?.role === "team_leader" && (
+                  <div className={`px-3.5 py-2 text-xs rounded-lg border font-mono font-bold select-none opacity-80 flex items-center gap-1.5
+                    ${darkMode ? "bg-slate-900 border-slate-800 text-slate-400" : "bg-white border-slate-205 text-slate-650"}`}
+                  >
+                    👔 TL: {currentUser.name}
+                  </div>
+                )
+              )}
+
+              {/* Sales Advisor select */}
+              {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin" || currentUser.role === "team_leader") ? (
+                <div className="relative">
+                  <select
+                    id="lead-pipeline-agent-filter"
+                    value={leadSelectedAgentName}
+                    onChange={(e) => setLeadSelectedAgentName(e.target.value)}
+                    className={`w-full px-3.5 py-2 text-xs font-semibold rounded-lg border cursor-pointer appearance-none outline-none focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 transition
+                      ${darkMode 
+                        ? "bg-slate-950 border-slate-800 text-slate-205" 
+                        : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                  >
+                    <option value="all">🛡️ (All Advisors)</option>
+                    <option value="Pending Assignment">⚠️ [Pending Assignment leads]</option>
+                    {leadSalesUsersOptions.map(user => {
+                      const labelPrefix = user.role === "team_leader" ? "👔" : "👤";
+                      const suffix = user.id === currentUser.id ? " (You)" : "";
+                      return (
+                        <option key={user.id} value={user.name}>
+                          {labelPrefix} {user.name}{suffix}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              ) : (
+                <div className={`px-3.5 py-2 text-xs rounded-lg border font-mono font-bold select-none opacity-80 flex items-center gap-1.5
+                  ${darkMode ? "bg-slate-900 border-slate-800 text-slate-400" : "bg-white border-slate-205 text-slate-650"}`}
+                >
+                  👤 Advisor: {currentUser?.name}
+                </div>
+              )}
+
+              {/* Project select with typed search option */}
+              <div className="flex flex-col gap-1 w-full">
+                <input
+                  type="text"
+                  id="lead-pipeline-project-search"
+                  placeholder="🔍 Search project name..."
+                  value={leadProjectSearchQuery}
+                  onChange={(e) => setLeadProjectSearchQuery(e.target.value)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg border w-full transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                    ${darkMode 
+                      ? "bg-slate-950 border-slate-800 text-slate-205 placeholder-slate-600 focus:border-teal-500" 
+                      : "bg-white border-slate-200 text-slate-705 placeholder-slate-400 hover:bg-slate-50"}`}
+                />
+                <select
+                  id="lead-pipeline-project-filter"
+                  value={leadProjectFilter}
+                  onChange={(e) => setLeadProjectFilter(e.target.value)}
+                  className={`w-full px-3 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer outline-none transition
+                    ${darkMode 
+                      ? "bg-slate-900 border-slate-800 text-slate-400 focus:border-teal-500" 
+                      : "bg-slate-5 border-slate-200 text-slate-505 hover:bg-slate-100"}`}
+                >
+                  <option value="all">🏢 (Quick select...)</option>
+                  {leadProjectsPool.map(proj => (
+                    <option key={proj} value={proj}>
+                      🏢 {proj}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Location select with typed search option */}
+              <div className="flex flex-col gap-1 w-full">
+                <input
+                  type="text"
+                  id="lead-pipeline-location-search"
+                  placeholder="🔍 Search location..."
+                  value={leadLocationSearchQuery}
+                  onChange={(e) => setLeadLocationSearchQuery(e.target.value)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg border w-full transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                    ${darkMode 
+                      ? "bg-slate-950 border-slate-800 text-slate-205 placeholder-slate-600 focus:border-teal-500" 
+                      : "bg-white border-slate-200 text-slate-705 placeholder-slate-400 hover:bg-slate-50"}`}
+                />
+                <select
+                  id="lead-pipeline-location-filter"
+                  value={leadLocationFilter}
+                  onChange={(e) => setLeadLocationFilter(e.target.value)}
+                  className={`w-full px-3 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer outline-none transition
+                    ${darkMode 
+                      ? "bg-slate-900 border-slate-800 text-slate-400 focus:border-teal-500" 
+                      : "bg-slate-5 border-slate-200 text-slate-505 hover:bg-slate-100"}`}
+                >
+                  <option value="all">📍 (Quick select...)</option>
+                  {leadLocationsPool.map(loc => (
+                    <option key={loc} value={loc}>
+                      📍 {loc}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Budget range query + select dropdown */}
+              <div className="flex flex-col gap-1 w-full">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Min Cr"
+                    value={leadBudgetMinQuery}
+                    onChange={(e) => setLeadBudgetMinQuery(e.target.value)}
+                    className={`px-2 py-1 text-[11px] font-semibold rounded-md border w-1/2 transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                      ${darkMode 
+                        ? "bg-slate-950 border-slate-800 text-teal-400 placeholder-slate-600 focus:border-teal-500" 
+                        : "bg-white border-slate-200 text-teal-700 placeholder-slate-400 hover:bg-slate-50"}`}
+                  />
+                  <span className="text-[10px] font-bold opacity-40">to</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="Max Cr"
+                    value={leadBudgetMaxQuery}
+                    onChange={(e) => setLeadBudgetMaxQuery(e.target.value)}
+                    className={`px-2 py-1 text-[11px] font-semibold rounded-md border w-1/2 transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                      ${darkMode 
+                        ? "bg-slate-950 border-slate-800 text-teal-400 placeholder-slate-600 focus:border-teal-500" 
+                        : "bg-white border-slate-200 text-teal-700 placeholder-slate-400 hover:bg-slate-50"}`}
+                  />
+                </div>
+                <select
+                  id="lead-pipeline-budget-filter"
+                  value={leadBudgetFilter}
+                  onChange={(e) => setLeadBudgetFilter(e.target.value)}
+                  className={`w-full px-3 py-1 text-[11px] font-semibold rounded-lg border cursor-pointer outline-none transition
+                    ${darkMode 
+                      ? "bg-slate-900 border-slate-800 text-slate-400 focus:border-teal-500" 
+                      : "bg-slate-5 border-slate-200 text-slate-505 hover:bg-slate-100"}`}
+                >
+                  <option value="all">💰 (Quick select...)</option>
+                  {leadBudgetsPool.map(bud => (
+                    <option key={bud} value={bud}>
+                      💰 {bud}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+            </div>
+          </div>
+
+          {/* Date Range Selector Card */}
+          <div className={`p-4 rounded-xl border flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4 sm:col-span-2 lg:col-span-5 transition duration-200
+            ${darkMode ? "bg-slate-900/60 border-slate-800/80" : "bg-slate-100/50 border-slate-200/90"}`}
+          >
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full xl:w-auto">
+              <span className={`text-[10px] font-bold uppercase tracking-wider font-mono flex items-center gap-1.5 whitespace-nowrap ${darkMode ? "text-slate-300" : "text-slate-600"}`}>
+                <Calendar size={13} className="text-teal-500" />
+                Date Range Filter:
+              </span>
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                <div className="relative">
+                  <input
+                    id="filter-start-date"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className={`pl-3 pr-2 py-1.5 text-xs rounded-lg border outline-none font-mono transition duration-150 focus:border-teal-500 w-full sm:w-[135px]
+                      ${darkMode ? "bg-slate-950 border-slate-850 text-white focus:bg-slate-900" : "bg-white border-slate-205 text-slate-800 focus:bg-slate-50"}`}
+                    title="Start Date (Creation date at or after this value)"
+                  />
+                  {!startDate && (
+                    <span className="absolute right-7.5 top-2.5 text-[9px] uppercase tracking-wider text-slate-400 font-mono pointer-events-none hidden sm:inline">Start</span>
+                  )}
+                </div>
+                
+                <span className={`text-xs font-bold ${darkMode ? "text-slate-600" : "text-slate-400"}`}>to</span>
+                
+                <div className="relative">
+                  <input
+                    id="filter-end-date"
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className={`pl-3 pr-2 py-1.5 text-xs rounded-lg border outline-none font-mono transition duration-150 focus:border-teal-500 w-full sm:w-[135px]
+                      ${darkMode ? "bg-slate-950 border-slate-850 text-white focus:bg-slate-900" : "bg-white border-slate-205 text-slate-800 focus:bg-slate-50"}`}
+                    title="End Date (Creation date at or before this value)"
+                  />
+                  {!endDate && (
+                    <span className="absolute right-7.5 top-2.5 text-[9px] uppercase tracking-wider text-slate-400 font-mono pointer-events-none hidden sm:inline">End</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 w-full xl:w-auto justify-start sm:justify-between xl:justify-end">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = new Date().toISOString().split("T")[0];
+                    setStartDate(today);
+                    setEndDate(today);
+                  }}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded-md border cursor-pointer transition-all active:scale-95
+                    ${startDate === new Date().toISOString().split("T")[0] && endDate === new Date().toISOString().split("T")[0]
+                      ? "bg-teal-500/15 border-teal-500/30 text-teal-400"
+                      : darkMode ? "bg-slate-950/80 border-slate-850 text-slate-400 hover:text-white hover:border-slate-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const today = new Date();
+                    const day = today.getDay();
+                    const diff = today.getDate() - day + (day === 0 ? -6 : 1);
+                    const monday = new Date(today.setDate(diff)).toISOString().split("T")[0];
+                    const sunday = new Date(new Date().setDate(diff + 6)).toISOString().split("T")[0];
+                    setStartDate(monday);
+                    setEndDate(sunday);
+                  }}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded-md border cursor-pointer transition-all active:scale-95
+                    ${darkMode ? "bg-slate-950/80 border-slate-850 text-slate-400 hover:text-white hover:border-slate-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}
+                >
+                  This Week
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const now = new Date();
+                    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split("T")[0];
+                    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split("T")[0];
+                    setStartDate(firstDay);
+                    setEndDate(lastDay);
+                  }}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded-md border cursor-pointer transition-all active:scale-95
+                    ${darkMode ? "bg-slate-950/80 border-slate-850 text-slate-400 hover:text-white hover:border-slate-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}
+                >
+                  This Month
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const todayTime = new Date();
+                    const thirtyDaysAgo = new Date(todayTime.setDate(todayTime.getDate() - 30)).toISOString().split("T")[0];
+                    const todayStr = new Date().toISOString().split("T")[0];
+                    setStartDate(thirtyDaysAgo);
+                    setEndDate(todayStr);
+                  }}
+                  className={`px-2 py-1 text-[10px] font-semibold rounded-md border cursor-pointer transition-all active:scale-95
+                    ${darkMode ? "bg-slate-950/80 border-slate-850 text-slate-400 hover:text-white hover:border-slate-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}
+                >
+                  Last 30 Days
+                </button>
+              </div>
+
+              {(startDate || endDate) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStartDate("");
+                    setEndDate("");
+                  }}
+                  className="px-2 py-1 text-[10px] font-bold uppercase font-mono tracking-wider rounded bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1 cursor-pointer transition active:scale-95"
+                >
+                  <X size={10} />
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Metrics count indicator */}
-          <div className={`p-1 px-3 rounded-xl border flex items-center justify-between text-xs font-mono sm:col-span-2 lg:col-span-5
+          <div className={`p-1 pl-3 pr-1.5 py-1.5 rounded-xl border flex items-center justify-between text-xs font-mono sm:col-span-2 lg:col-span-5
             ${darkMode ? "bg-slate-950 border-slate-800/80 text-slate-400" : "bg-slate-50 border-slate-100 text-slate-500"}`}
           >
             <span>Retrieved Matrix Size:</span>
-            <span className="font-bold text-teal-500">{filteredLeads.length} records matching parameters</span>
+            <div className="flex items-center gap-2 sm:gap-4 flex-wrap">
+              <span className="font-bold text-teal-500">{filteredLeads.length} records matching parameters</span>
+              {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") && (
+                <button
+                  type="button"
+                  id="download-filtered-leads-excel-btn"
+                  onClick={handleDownloadExcel}
+                  className={`px-3 py-1 text-[11px] font-sans font-bold uppercase tracking-wider rounded-lg border cursor-pointer transition active:scale-95 flex items-center gap-1.5 hover:shadow-sm
+                    ${darkMode 
+                      ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400 hover:bg-emerald-500/20 hover:border-emerald-500/40" 
+                      : "bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100/80"}`}
+                >
+                  <Download size={13} className="text-emerald-500" />
+                  Excel Export
+                </button>
+              )}
+            </div>
           </div>
 
         </div>
@@ -837,7 +1534,7 @@ export default function LeadPipeline({
                     <IndianRupee size={14} className="text-teal-500" />
                     <div>
                       <p className="text-[10px] text-slate-400 leading-none">BUDGET ALLOCATED</p>
-                      <p className="text-xs font-bold font-mono text-teal-400 tracking-tight mt-0.5">{lead.budget || "N/A"}</p>
+                      <p className="text-xs font-bold font-mono text-teal-400 tracking-tight mt-0.5">{formatBudgetSafely(lead.budget)}</p>
                     </div>
                   </div>
 
@@ -1684,7 +2381,7 @@ export default function LeadPipeline({
             <p className="text-xs text-slate-400 mb-4">
               Import investor logs instantly via spreadsheet templates. Supports columns: 
               <span className="font-mono text-[10px] text-teal-400 block mt-1 bg-slate-950/40 p-2 rounded border border-slate-800">
-                CUSTOMER NAME, PROJECT NAME, EMAIL ADDRESS, PHONE NUMBER, LEAD SOURCE, PHYSICAL LOCATION, LEAD STATUS, LEAD PRIORITY, BUDGET, NOTES (CONSULTATION SYNOPSIS BRIEF)
+                CUSTOMER NAME, PROJECT NAME, EMAIL ADDRESS, PHONE NUMBER, LEAD SOURCE, PHYSICAL LOCATION, LEAD STATUS, LEAD PRIORITY, BUDGET, NOTES (CONSULTATION SYNOPSIS BRIEF), ASSIGN AGENT
               </span>
             </p>
 
@@ -1798,7 +2495,7 @@ export default function LeadPipeline({
                           <td className="p-2 border-r border-slate-800/10 whitespace-nowrap">{lead.source}</td>
                           <td className="p-2 border-r border-slate-800/10 font-semibold text-teal-400 whitespace-nowrap">{lead.assignedAgent}</td>
                           <td className="p-2 border-r border-slate-800/10 whitespace-nowrap">{lead.location}</td>
-                          <td className="p-2 border-r border-slate-800/10 font-mono tracking-tight text-amber-500 font-semibold whitespace-nowrap">{lead.budget}</td>
+                          <td className="p-2 border-r border-slate-800/10 font-mono tracking-tight text-amber-500 font-semibold whitespace-nowrap">{formatBudgetSafely(lead.budget)}</td>
                           <td className="p-2 whitespace-nowrap">
                             <span className="px-1.5 py-0.2 rounded-md bg-teal-500/10 text-teal-400 border border-teal-500/20 text-[8px] font-mono tracking-wider font-semibold">
                               {lead.status}

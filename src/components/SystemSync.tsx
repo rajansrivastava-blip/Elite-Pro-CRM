@@ -25,7 +25,9 @@ import {
   Shield,
   Clock,
   Trash,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Globe,
+  Sparkles
 } from "lucide-react";
 import { SupabaseStatus } from "../supabase";
 import { 
@@ -38,7 +40,10 @@ import {
   extractSpreadsheetId 
 } from "../googleAuth";
 
+import { User } from "../types";
+
 interface SystemSyncProps {
+  currentUser?: User | null;
   darkMode: boolean;
   isSyncing: boolean;
   onTriggerSync: () => void;
@@ -72,9 +77,18 @@ interface SystemSyncProps {
   setAutoSheetsSync: React.Dispatch<React.SetStateAction<boolean>>;
   lastSheetsSynced: string;
   setLastSheetsSynced: React.Dispatch<React.SetStateAction<string>>;
+
+  // Hoisted Meta Ads configuration states
+  metaVerifyToken: string;
+  setMetaVerifyToken: React.Dispatch<React.SetStateAction<string>>;
+  metaAutoIngest: boolean;
+  setMetaAutoIngest: React.Dispatch<React.SetStateAction<boolean>>;
+  lastMetaSynced: string;
+  setLastMetaSynced: React.Dispatch<React.SetStateAction<string>>;
 }
 
 export default function SystemSync({
+  currentUser,
   darkMode,
   isSyncing,
   onTriggerSync,
@@ -99,9 +113,18 @@ export default function SystemSync({
   autoSheetsSync,
   setAutoSheetsSync,
   lastSheetsSynced,
-  setLastSheetsSynced
+  setLastSheetsSynced,
+  metaVerifyToken,
+  setMetaVerifyToken,
+  metaAutoIngest,
+  setMetaAutoIngest,
+  lastMetaSynced,
+  setLastMetaSynced
 }: SystemSyncProps) {
   
+  // Privilege check
+  const isPrivileged = currentUser?.role === "super_admin" || currentUser?.role === "admin";
+
   // Status check state
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(true);
   
@@ -110,6 +133,89 @@ export default function SystemSync({
   const [googleToken, setGoogleToken] = useState<string | null>(() => getCachedGoogleToken());
   const [isSheetsSyncing, setIsSheetsSyncing] = useState(false);
   const [sheetsFeedback, setSheetsFeedback] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+
+  // Meta Ads simulator state
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
+  const [isSimulatingLead, setIsSimulatingLead] = useState(false);
+  const [simulationResult, setSimulationResult] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  // Simulated lead form fields
+  const [simName, setSimName] = useState("Vikram Sengupta");
+  const [simPhone, setSimPhone] = useState("+91 98112 34567");
+  const [simEmail, setSimEmail] = useState("vikram.sengupta@premiumspace.in");
+  const [simBudget, setSimBudget] = useState("₹2.25 Cr");
+  const [simLocation, setSimLocation] = useState("Gurugram Sector-104");
+  const [simCampaign, setSimCampaign] = useState("Elite High-Rise Residential - Q2 Inbound");
+  const [simProject, setSimProject] = useState("Elite Signature Residences");
+  const [showSimulator, setShowSimulator] = useState(false);
+
+  const simulateMetaAdsWebhookCall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSimulatingLead(true);
+    setSimulationResult(null);
+
+    try {
+      const response = await fetch("/api/webhooks/meta-ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isSimulation: true,
+          name: simName,
+          phone: simPhone,
+          email: simEmail,
+          budget: simBudget,
+          location: simLocation,
+          campaign: simCampaign,
+          projectName: simProject,
+          notes: "Simulated live customer form feed triggered via CRM Webhook test simulator."
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP Error ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data && data.success) {
+        setSimulationResult({
+          type: "success",
+          message: `Webhook received by CRM successfully! Created Lead ID: ${data.leadId || "N/A"}. Added with Source (Meta Ad) & Assignee: 'Pending Assignment'.`
+        });
+        
+        // Randomize fields for next simulation
+        const firstNames = ["Rajesh", "Pooja", "Arjun", "Aditi", "Karan", "Simran", "Kabir", "Neha", "Rohan"];
+        const lastNames = ["Kapoor", "Srinivasan", "Shastri", "Malhotra", "Goel", "Bhasin", "Trivedi", "Chawla"];
+        const budgets = ["₹1.80 Cr", "₹3.50 Cr", "₹2.90 Cr", "₹4.75 Cr", "₹95 Lakh", "₹5.50 Cr"];
+        const sectors = ["Gurugram Phase 1", "Noida Sector-150", "South Delhi Estates", "Dwarka Expressway", "Noida Expressway"];
+        const campaigns = ["Super Luxury Villas - Q3 Inbound", "Elite Commercial Units Inflow", "Penthouse Splendor Campaign"];
+        const projects = ["Elite Landmark Heights", "The Courtyard Estates", "Elite Sovereign Terraces"];
+
+        const rFirst = firstNames[Math.floor(Math.random() * firstNames.length)];
+        const rLast = lastNames[Math.floor(Math.random() * lastNames.length)];
+        const rName = `${rFirst} ${rLast}`;
+        
+        setSimName(rName);
+        setSimPhone(`+91 98${Math.floor(Math.random() * 900000 + 100000)}`);
+        setSimEmail(`${rName.toLowerCase().replace(/\s+/g, ".")}@example.com`);
+        setSimBudget(budgets[Math.floor(Math.random() * budgets.length)]);
+        setSimLocation(sectors[Math.floor(Math.random() * sectors.length)]);
+        setSimCampaign(campaigns[Math.floor(Math.random() * campaigns.length)]);
+        setSimProject(projects[Math.floor(Math.random() * projects.length)]);
+      } else {
+        setSimulationResult({
+          type: "error",
+          message: `Webhook failed: ${data.error || "Unknown server response."}`
+        });
+      }
+    } catch (err: any) {
+      setSimulationResult({
+        type: "error",
+        message: `Simulation connection failed: ${err.message || String(err)}`
+      });
+    } finally {
+      setIsSimulatingLead(false);
+    }
+  };
 
   // Handle Firebase Auth listener for Google authentication
   useEffect(() => {
@@ -176,7 +282,7 @@ export default function SystemSync({
       }
 
       // 2. Parse values
-      const parsedLeads = mapSpreadsheetRowsToLeads(rows);
+      const parsedLeads = mapSpreadsheetRowsToLeads(rows, users);
       if (parsedLeads.length === 0) {
         setSheetsFeedback({ 
           message: "No valid leads could be parsed. Check that your spreadsheet contains a 'Name' column with non-empty rows.", 
@@ -214,7 +320,7 @@ export default function SystemSync({
       localStorage.setItem("google_sheets_last_sync_time", updatedTime);
 
       setSheetsFeedback({
-        message: `Sync Completed successfully: Analyzed ${rows.length - 1} records from sheet. Ingested ${filteredNewLeads.length} new leads into CRM (skipped ${parsedLeads.length - filteredNewLeads.length} duplicates). All ingested leads are automatically assigned to "Admin".`,
+        message: `Sync Completed successfully: Analyzed ${rows.length - 1} records from sheet. Ingested ${filteredNewLeads.length} new leads into CRM (skipped ${parsedLeads.length - filteredNewLeads.length} duplicates). Leads matching Sales Team or TL names are transferred, unmatched assigned to Admin.`,
         type: "success"
       });
 
@@ -578,7 +684,7 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
       )}
 
       {/* Grid of integrations cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
         
         {/* Card 1: Google Calendar Domain Sync */}
         <div className={`p-5 rounded-2xl border transition-all relative overflow-hidden flex flex-col justify-between
@@ -631,8 +737,9 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             </button>
             <button
               id="google-cal-config-btn"
-              onClick={() => setGoogleCalendarConnected(!googleCalendarConnected)}
-              className={`px-3 py-2 text-xs font-semibold rounded-lg transition border cursor-pointer select-none
+              disabled={!isPrivileged}
+              onClick={() => isPrivileged && setGoogleCalendarConnected(!googleCalendarConnected)}
+              className={`px-3 py-2 text-xs font-semibold rounded-lg transition border cursor-pointer select-none disabled:opacity-50 disabled:cursor-not-allowed
                 ${googleCalendarConnected 
                   ? "border-rose-500/20 text-rose-500 bg-rose-500/5 hover:bg-rose-500/10" 
                   : "border-teal-500/20 text-teal-400 bg-teal-500/5 hover:bg-teal-500/10"}`}
@@ -670,19 +777,21 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
               ${darkMode ? "bg-slate-950/45 border-slate-800/40" : "bg-slate-50 border-slate-200"}`}
             >
               <div className="flex flex-col gap-0.5">
-                <span className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? "text-slate-300" : "text-slate-700"}`}>
-                  Real-Time Auto-Sync
+                <span className={`text-[10px] font-bold uppercase tracking-wider ${darkMode ? "text-slate-300" : "text-slate-700"} flex items-center gap-1`}>
+                  <span>Real-Time Auto-Sync</span>
+                  {!isPrivileged && <span className="text-amber-500 font-sans text-[8px] font-bold">🔒 Locked</span>}
                 </span>
-                <span className="text-[10px] text-slate-450 text-left">
+                <span className="text-[10px] text-slate-455 text-left">
                   Upload changes instantly in the background
                 </span>
               </div>
               <button
                 type="button"
                 id="toggle-supabase-autosync-switch"
-                onClick={onToggleAutoSync}
-                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-teal-500 focus:ring-offset-1
-                  ${isAutoSyncEnabled ? "bg-teal-600" : "bg-slate-700"}`}
+                disabled={!isPrivileged}
+                onClick={() => isPrivileged && onToggleAutoSync()}
+                className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-1 focus:ring-teal-500 focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed
+                  ${isAutoSyncEnabled ? "bg-teal-600" : "bg-slate-755"}`}
               >
                 <span
                   className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
@@ -746,9 +855,9 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             <button
               id="supabase-push-btn"
               onClick={executePush}
-              disabled={isSupabaseOpInProgress || !supabaseStatus.isConnected}
+              disabled={isSupabaseOpInProgress || !supabaseStatus.isConnected || !isPrivileged}
               className={`flex-1 py-1.5 text-[11px] font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white cursor-pointer active:scale-95 transition flex items-center justify-center gap-1
-                ${(!supabaseStatus.isConnected || isSupabaseOpInProgress) && "opacity-50 cursor-not-allowed"}`}
+                ${(!supabaseStatus.isConnected || isSupabaseOpInProgress || !isPrivileged) && "opacity-55 cursor-not-allowed bg-teal-800"}`}
               title="Push current local Leads / Appointments database to Supabase tables"
             >
               <RefreshCw size={11} className={isSupabaseOpInProgress ? "animate-spin" : ""} />
@@ -757,10 +866,10 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             <button
               id="supabase-pull-btn"
               onClick={executePull}
-              disabled={isSupabaseOpInProgress || !supabaseStatus.isConnected}
-              className={`flex-1 py-1.5 text-[11px] font-semibold rounded-lg border cursor-pointer active:scale-95 transition flex items-center justify-center gap-1
+              disabled={isSupabaseOpInProgress || !supabaseStatus.isConnected || !isPrivileged}
+              className={`flex-1 py-1.5 text-[11px] font-semibold rounded-lg border cursor-pointer active:scale-95 transition flex items-center justify-center gap-1 disabled:opacity-55 disabled:cursor-not-allowed
                 ${darkMode ? "bg-slate-800 hover:bg-slate-705 border-slate-700 text-white" : "bg-slate-50 hover:bg-slate-100 border-slate-205"}
-                ${(!supabaseStatus.isConnected || isSupabaseOpInProgress) && "opacity-50 cursor-not-allowed"}`}
+                ${(!supabaseStatus.isConnected || isSupabaseOpInProgress || !isPrivileged) && "opacity-50"}`}
               title="Pull remote database and override current local view"
             >
               Fetch Live Data
@@ -794,32 +903,46 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             {/* Inputs block */}
             <div className="mt-4 pt-3 border-t border-slate-150/10 dark:border-slate-800/40 space-y-3">
               <div>
-                <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Spreadsheet URL or ID</label>
+                <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold flex items-center justify-between">
+                  <span>Spreadsheet URL or ID</span>
+                  {!isPrivileged && <span className="text-amber-500 font-sans text-[9px] font-bold uppercase tracking-wide flex items-center gap-1">🔒 Locked (Viewer)</span>}
+                </label>
                 <input
                   type="text"
                   placeholder="Paste URL or ID"
                   value={sheetUrl}
-                  onChange={(e) => setSheetUrl(e.target.value)}
+                  onChange={(e) => isPrivileged && setSheetUrl(e.target.value)}
+                  readOnly={!isPrivileged}
                   className={`w-full px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono
+                    ${!isPrivileged ? "opacity-75 cursor-not-allowed bg-slate-100/5 dark:bg-slate-950/20" : ""}
                     ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-205 text-slate-900"}`}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Sheet Name / Range</label>
+                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold flex items-center justify-between">
+                    <span>Sheet Name / Range</span>
+                    {!isPrivileged && <span className="text-amber-500 font-sans text-[9px] font-bold">🔒 Locked</span>}
+                  </label>
                   <input
                     type="text"
                     placeholder="Sheet1"
                     value={sheetRange}
-                    onChange={(e) => setSheetRange(e.target.value)}
+                    onChange={(e) => isPrivileged && setSheetRange(e.target.value)}
+                    readOnly={!isPrivileged}
                     className={`w-full px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500 font-mono
+                      ${!isPrivileged ? "opacity-75 cursor-not-allowed bg-slate-100/5 dark:bg-slate-950/20" : ""}
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-205 text-slate-900"}`}
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Auto Sheet Sync (60s)</label>
+                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold flex items-center justify-between">
+                    <span>Auto Sheet Sync (60s)</span>
+                    {!isPrivileged && <span className="text-amber-500 font-sans text-[9px] font-bold">🔒 Locked</span>}
+                  </label>
                   <div className={`p-1.5 rounded-lg border flex items-center justify-between h-[34px]
+                    ${!isPrivileged ? "opacity-70 cursor-not-allowed" : ""}
                     ${darkMode ? "bg-slate-950/45 border-slate-800/40" : "bg-slate-50 border-slate-200"}`}
                   >
                     <span className="text-[9px] text-slate-450 uppercase font-mono pl-1 font-semibold">
@@ -827,8 +950,9 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
                     </span>
                     <button
                       type="button"
-                      onClick={() => setAutoSheetsSync(prev => !prev)}
-                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none
+                      disabled={!isPrivileged}
+                      onClick={() => isPrivileged && setAutoSheetsSync(prev => !prev)}
+                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:cursor-not-allowed
                         ${autoSheetsSync ? "bg-teal-600" : "bg-slate-750"}`}
                     >
                       <span
@@ -879,7 +1003,7 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
               <button
                 type="button"
                 onClick={executeGoogleSheetsSync}
-                disabled={isSheetsSyncing}
+                disabled={isSheetsSyncing || !isPrivileged}
                 className={`flex-1 py-1.5 text-xs font-semibold rounded-lg bg-teal-600 hover:bg-teal-700 text-white cursor-pointer active:scale-95 transition flex items-center justify-center gap-1.5 disabled:opacity-55 shadow-md shadow-teal-500/10`}
               >
                 <RefreshCw size={12} className={isSheetsSyncing ? "animate-spin" : ""} />
@@ -888,8 +1012,9 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
 
               <button
                 type="button"
+                disabled={!isPrivileged}
                 onClick={googleUser ? handleGoogleSheetsSignOut : handleGoogleSheetsSignIn}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition border cursor-pointer select-none active:scale-95
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition border cursor-pointer select-none active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed
                   ${googleUser 
                     ? "border-rose-500/20 text-rose-500 bg-rose-500/5 hover:bg-rose-500/10" 
                     : "border-teal-500/20 text-teal-400 bg-teal-500/5 hover:bg-teal-500/10"}`}
@@ -897,6 +1022,232 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
                 {googleUser ? "Disconnect" : "Google Login"}
               </button>
             </div>
+          </div>
+        </div>
+
+        {/* Card 4: Meta Ads Instant Webhook Integration */}
+        <div className={`p-5 rounded-2xl border transition-all relative overflow-hidden flex flex-col justify-between
+          ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-100 shadow-sm"}`}
+        >
+          <div>
+            <div className="flex justify-between items-start mb-4">
+              <div className="p-2.5 rounded-xl bg-indigo-500/10 text-indigo-400">
+                <Globe size={20} className="text-indigo-400" />
+              </div>
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-wider uppercase flex items-center gap-1
+                ${metaAutoIngest 
+                  ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 animate-pulse" 
+                  : "bg-slate-800 text-slate-400"}`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${metaAutoIngest ? "bg-indigo-405 animate-pulse" : "bg-slate-400"}`} />
+                {metaAutoIngest ? "Inbound Aligned" : "Inactive"}
+              </span>
+            </div>
+
+            <h4 className="font-display font-bold text-base">Meta Ads Lead Webhook</h4>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+              Streams campaign inquiries directly from Facebook & Instagram Form triggers. Leads are fed automatically into the CRM as <strong className="text-indigo-300">Pending Assignment</strong> for super admins & admins to manually assign.
+            </p>
+
+            {/* Inputs block */}
+            <div className="mt-4 pt-3 border-t border-slate-150/10 dark:border-slate-800/40 space-y-3">
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold">Active Webhook URL</label>
+                <div className="relative font-mono">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${window.location.protocol}//${window.location.host}/api/webhooks/meta-ads`}
+                    className={`w-full pr-10 px-3 py-1.5 text-xs rounded-lg border focus:outline-none font-mono select-all truncate
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-slate-50 border-slate-205 text-slate-705"}`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.protocol}//${window.location.host}/api/webhooks/meta-ads`);
+                      setCopiedWebhook(true);
+                      setTimeout(() => setCopiedWebhook(false), 2000);
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-white transition active:scale-90"
+                    title="Copy Webhook Endpoint URL"
+                  >
+                    {copiedWebhook ? (
+                      <Check size={13} className="text-emerald-400" />
+                    ) : (
+                      <Copy size={13} />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold flex items-center justify-between">
+                    <span>Verify Token</span>
+                    {!isPrivileged && <span className="text-amber-500 font-sans text-[9px] font-bold">🔒 Locked</span>}
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Verify Token (hub.verify_token)"
+                    value={metaVerifyToken}
+                    onChange={(e) => isPrivileged && setMetaVerifyToken(e.target.value)}
+                    readOnly={!isPrivileged}
+                    className={`w-full px-3 py-1.5 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
+                      ${!isPrivileged ? "opacity-75 cursor-not-allowed bg-slate-100/5 dark:bg-slate-950/20" : ""}
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-205 text-slate-900"}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1 font-semibold flex items-center justify-between">
+                    <span>Live Ingest</span>
+                    {!isPrivileged && <span className="text-amber-500 font-sans text-[9px] font-bold">🔒 Locked</span>}
+                  </label>
+                  <div className={`p-1.5 rounded-lg border flex items-center justify-between h-[34px]
+                    ${!isPrivileged ? "opacity-70 cursor-not-allowed" : ""}
+                    ${darkMode ? "bg-slate-950/45 border-slate-800/40" : "bg-slate-50 border-slate-200"}`}
+                  >
+                    <span className="text-[9px] text-slate-450 uppercase font-mono pl-1 font-semibold">
+                      {metaAutoIngest ? "ACTIVE" : "PAUSED"}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={!isPrivileged}
+                      onClick={() => isPrivileged && setMetaAutoIngest(prev => !prev)}
+                      className={`relative inline-flex h-4 w-7 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none disabled:cursor-not-allowed
+                        ${metaAutoIngest ? "bg-indigo-650" : "bg-slate-755"}`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-3 w-3 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+                          ${metaAutoIngest ? "translate-x-3" : "translate-x-0"}`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-2 text-[10.5px] font-mono space-y-1.5 text-slate-405 border-t border-slate-150/10 dark:border-slate-800/40">
+                <div className="flex justify-between">
+                  <span>Last Checked Inbound:</span>
+                  <span className="text-slate-350 font-semibold">{lastMetaSynced}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Inbound Status:</span>
+                  <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-450 animate-pulse" /> Active & Standby
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-slate-105/5 space-y-3">
+            {/* Expanded simulator form drawer */}
+            {showSimulator && (
+              <form onSubmit={simulateMetaAdsWebhookCall} className={`p-3 rounded-lg border text-left space-y-3 leading-relaxed animate-fadeIn
+                ${darkMode ? "bg-slate-950 border-slate-850 text-slate-300" : "bg-slate-50 border-slate-200"}`}
+              >
+                <div className="flex items-center justify-between border-b border-slate-800/10 pb-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
+                    <Sparkles size={11} className="text-amber-400 animate-bounce" />
+                    <span className={darkMode ? "text-slate-205" : "text-slate-805"}>Facebook Lead Ads Simulator</span>
+                  </div>
+                  <span className="text-[8px] font-mono select-none px-1 py-0.5 rounded bg-slate-800 text-slate-450">Sandbox Dry-Run</span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div>
+                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Name</label>
+                    <input
+                      type="text"
+                      required
+                      value={simName}
+                      onChange={(e) => setSimName(e.target.value)}
+                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
+                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Phone</label>
+                    <input
+                      type="text"
+                      required
+                      value={simPhone}
+                      onChange={(e) => setSimPhone(e.target.value)}
+                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
+                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 text-[10px]">
+                  <div>
+                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Budget Preference</label>
+                    <input
+                      type="text"
+                      required
+                      value={simBudget}
+                      onChange={(e) => setSimBudget(e.target.value)}
+                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
+                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Email</label>
+                    <input
+                      type="email"
+                      required
+                      value={simEmail}
+                      onChange={(e) => setSimEmail(e.target.value)}
+                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
+                        ${darkMode ? "bg-slate-900 border-slate-800 text-white animate-pulse" : "bg-white border-slate-200 text-slate-900"}`}
+                    />
+                  </div>
+                </div>
+
+                <div className="text-[10px]">
+                  <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Campaign Name / Project Preferences</label>
+                  <input
+                    type="text"
+                    required
+                    value={simCampaign}
+                    onChange={(e) => setSimCampaign(e.target.value)}
+                    className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
+                      ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                  />
+                </div>
+
+                {simulationResult && (
+                  <div className={`p-2 rounded text-[10px] font-mono border leading-relaxed
+                    ${simulationResult.type === "success" 
+                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
+                      : "bg-rose-500/10 border-rose-500/20 text-rose-500"}`}
+                  >
+                    {simulationResult.message}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isSimulatingLead}
+                  className="w-full py-1 text-xs font-semibold rounded bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white transition flex items-center justify-center gap-1 disabled:opacity-55"
+                >
+                  <Sparkles size={11} className={isSimulatingLead ? "animate-spin" : ""} />
+                  {isSimulatingLead ? "Firing Webhook..." : "Deploy Webhook Simulation"}
+                </button>
+              </form>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setShowSimulator(prev => !prev)}
+              className={`w-full py-1.5 text-xs font-semibold rounded-lg border transition cursor-pointer select-none active:scale-95 flex items-center justify-center gap-1.5
+                ${showSimulator 
+                  ? "bg-rose-500/5 border-rose-500/10 text-rose-455 hover:bg-rose-500/10" 
+                  : "bg-indigo-500/5 border-indigo-500/10 text-indigo-400 hover:bg-indigo-500/10"}`}
+            >
+              <Settings size={12} />
+              {showSimulator ? "Close Form Simulator" : "Live Webhook Test Simulator"}
+            </button>
           </div>
         </div>
 

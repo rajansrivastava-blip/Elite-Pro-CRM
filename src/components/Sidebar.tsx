@@ -102,7 +102,7 @@ export default function Sidebar({
         {/* Brand Header */}
         <div className={`p-5 pb-6 border-b flex items-center justify-between ${darkMode ? "border-slate-800 bg-slate-950/20" : "border-slate-150 bg-slate-100/10"}`}>
           <div className="flex-1 flex justify-center">
-            <EliteProLogo scale={1.05} />
+            <EliteProLogo scale={1.05} darkMode={darkMode} />
           </div>
           {onClose && (
             <button

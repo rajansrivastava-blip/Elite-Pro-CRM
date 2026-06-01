@@ -33,7 +33,14 @@ export default function StakeholderReports({
   
   // Parse budget values comfortably
   const parseBudgetValue = (b: string): number => {
-    const cleaned = b.replace(/[₹$cr\sM]/gi, "");
+    if (!b) return 0;
+    const sanitized = b
+      .replace(/â\u0082¹/g, "₹")
+      .replace(/â‚¹/g, "₹")
+      .replace(/â\u0082/g, "₹")
+      .replace(/â\u0092¹/g, "₹")
+      .replace(/â\u0092/g, "₹");
+    const cleaned = sanitized.replace(/[₹$cr\sM]/gi, "");
     const val = parseFloat(cleaned);
     if (!isNaN(val)) {
       if (b.toLowerCase().includes("lakh") || b.toLowerCase().includes("l")) {
@@ -318,7 +325,7 @@ Recent deals show clients prioritizing zero-carbon configurations, cold storage 
                 >
                   {/* Decorative Seal header */}
                   <div className="flex items-center justify-between opacity-35 text-[10px] uppercase font-mono tracking-widest mb-4">
-                    <span>ELITE PRO INFRA ADVISORY</span>
+                    <span>CORPORATE ADVISORY BOARD</span>
                     <span>Q2 HIGH CONFI BRIEF</span>
                   </div>
 

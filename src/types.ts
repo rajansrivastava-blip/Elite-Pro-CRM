@@ -104,3 +104,17 @@ export interface LeadEditLog {
   timestamp: string;
   changes: LeadEditFieldChange[];
 }
+
+export interface AppNotification {
+  id: string;
+  recipientName: string; // User's name assigned to
+  title: string;
+  message: string;
+  leadId?: string;
+  leadName?: string;
+  source?: string;
+  timestamp: string;
+  isRead: boolean;
+  type: 'assignment' | 'manual' | 'sync' | 'update';
+}
+

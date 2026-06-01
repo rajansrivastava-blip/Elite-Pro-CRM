@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import fs from "fs";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
 import { createClient } from "@supabase/supabase-js";
@@ -83,6 +84,42 @@ function getGeminiClient(): GoogleGenAI {
 // REST API Endpoints
 app.get("/api/health", (req, res) => {
   res.json({ status: "healthy", timestamp: new Date().toISOString() });
+});
+
+// Endpoint to load persistent configuration settings (e.g., Google Sheet URL)
+app.get("/api/settings", (req, res) => {
+  const settingsPath = path.join(process.cwd(), "settings.json");
+  try {
+    if (fs.existsSync(settingsPath)) {
+      const data = fs.readFileSync(settingsPath, "utf-8");
+      return res.json(JSON.parse(data));
+    }
+  } catch (err) {
+    console.error("Failed to read settings from path:", err);
+  }
+  // Return safe defaults
+  return res.json({
+    sheetUrl: "",
+    sheetRange: "Sheet1",
+    autoSheetsSync: false,
+    lastSheetsSynced: "Never",
+    metaVerifyToken: "elite_pro_meta_verify_token_2026",
+    metaAutoIngest: true,
+    lastMetaSynced: "Never"
+  });
+});
+
+// Endpoint to save persistent configuration settings (e.g., Google Sheet URL)
+app.post("/api/settings", (req, res) => {
+  const settingsPath = path.join(process.cwd(), "settings.json");
+  try {
+    const config = req.body || {};
+    fs.writeFileSync(settingsPath, JSON.stringify(config, null, 2), "utf-8");
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error("Failed to write settings to path:", err);
+    return res.status(500).json({ error: err.message || String(err) });
+  }
 });
 
 // Endpoint: Generate Automated Real Estate / Infrastructure Lead Follow-Up Email
@@ -252,6 +289,210 @@ app.get("/api/proxy-sheet-csv", async (req, res) => {
     return res.send(csvContent);
   } catch (err: any) {
     return res.status(500).json({ error: err.message || "Failed to retrieve public spreadsheet records." });
+  }
+});
+
+// ==========================================
+// META ADS INTEGRATION SYSTEM & WEBHOOKS
+// ==========================================
+
+// Temporary cache of leads received via Meta Webhooks, waiting for client CRM retrieval.
+let metaLeadsCache: any[] = [];
+const metaLeadsPath = path.join(process.cwd(), "meta_leads_cache.json");
+
+function loadMetaLeadsCache() {
+  try {
+    if (fs.existsSync(metaLeadsPath)) {
+      const txt = fs.readFileSync(metaLeadsPath, "utf-8");
+      metaLeadsCache = JSON.parse(txt);
+    }
+  } catch (err) {
+    console.error("Failed to load meta leads cache:", err);
+  }
+}
+
+function saveMetaLeadsCache() {
+  try {
+    fs.writeFileSync(metaLeadsPath, JSON.stringify(metaLeadsCache, null, 2), "utf-8");
+  } catch (err) {
+    console.error("Failed to save meta leads cache:", err);
+  }
+}
+
+// Initial load
+loadMetaLeadsCache();
+
+// Webhook GET: Meta webhook subscription verification
+app.get("/api/webhooks/meta-ads", (req, res) => {
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  let verifyToken = "elite_pro_meta_verify_token_2026";
+  const settingsPath = path.join(process.cwd(), "settings.json");
+  try {
+    if (fs.existsSync(settingsPath)) {
+      const data = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+      if (data.metaVerifyToken) {
+        verifyToken = data.metaVerifyToken.trim();
+      }
+    }
+  } catch (e) {}
+
+  if (mode === "subscribe" && token === verifyToken) {
+    console.log("[Meta Webhook] Verification successful!");
+    return res.status(200).send(challenge);
+  } else {
+    console.warn("[Meta Webhook] Verification failed. Token mismatch.");
+    return res.status(403).send("Verification failed");
+  }
+});
+
+// Webhook POST: Meta webhook incoming lead generation (or simulation)
+app.post("/api/webhooks/meta-ads", async (req, res) => {
+  try {
+    console.log("[Meta Webhook] Received webhook payload:", JSON.stringify(req.body));
+    const body = req.body || {};
+    
+    let name = "Meta Lead User";
+    let email = "";
+    let phone = "";
+    let budget = "₹1.50 Cr";
+    let location = "Noida, India";
+    let projectName = "Elite Living";
+    let notes = "Acquired automatically via Meta Ad Lead form.";
+
+    // Check simulation payload
+    if (body.isSimulation) {
+      name = body.name || name;
+      email = body.email || email;
+      phone = body.phone || phone;
+      budget = body.budget || budget;
+      location = body.location || location;
+      projectName = body.projectName || projectName;
+      notes = body.notes || notes;
+    } else {
+      // Standard Facebook Graph Webhook Leadgen Notification format
+      if (body.entry && body.entry[0] && body.entry[0].changes && body.entry[0].changes[0]) {
+        const changeVal = body.entry[0].changes[0].value;
+        const leadgenId = changeVal.leadgen_id || "direct_webhook";
+        notes = `Meta Ads Lead Campaign. Leadgen ID: ${leadgenId}. Form ID: ${changeVal.form_id || "N/A"}.`;
+        name = "Meta Lead #" + leadgenId.slice(-4);
+        email = `meta_${leadgenId.slice(-4)}@elitepro-leads.com`;
+        phone = "+91 99999 0" + leadgenId.slice(-4);
+      } else if (body.leadgen_id) {
+        name = body.name || ("Meta Lead #" + String(body.leadgen_id).slice(-4));
+        email = body.email || "meta_lead@example.com";
+        phone = body.phone || "+91 90000 00001";
+        budget = body.budget || "₹1.20 Cr";
+        location = body.location || "Noida Expressway";
+        projectName = body.projectName || "Commercial Hub";
+      } else {
+        name = body.name || name;
+        email = body.email || email;
+        phone = body.phone || phone;
+        budget = body.budget || budget;
+        location = body.location || location;
+      }
+    }
+
+    // Prepare Lead payload (consistent camelCase for frontend and map to Supabase)
+    const newLead = {
+      id: "lead-meta-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+      name,
+      company: body.campaign || "Meta Ad Campaign",
+      position: "Meta Ads Lead",
+      email: email || `${name.toLowerCase().replace(/\s+/g, '_')}@elitepro-leads.com`,
+      phone: phone || "+91 90000 00000",
+      source: "Meta Ad" as any,
+      status: "Interested" as any,
+      temperature: "Warm" as any,
+      budget: budget || "₹1.50 Cr",
+      location: location || "Noida, India",
+      assignedAgent: "Pending Assignment", // Instructively unassigned to let Admin allocate manually
+      notes: notes || "Meta Ads lead captured automatically via Facebook Graph integrations.",
+      projectName: projectName || "Elite Residency",
+      dateCreated: new Date().toISOString().split("T")[0],
+      dateUpdated: new Date().toISOString().split("T")[0],
+      lastCommunication: "Never",
+      score: 80
+    };
+
+    // 1. Try writing directly to Supabase if connection exists
+    let savedToSupabase = false;
+    let supabaseErr = null;
+    try {
+      const dbPayload = {
+        id: newLead.id,
+        name: newLead.name,
+        company: newLead.company,
+        position: newLead.position,
+        email: newLead.email,
+        phone: newLead.phone,
+        source: newLead.source,
+        status: newLead.status,
+        temperature: newLead.temperature,
+        budget: newLead.budget,
+        location: newLead.location,
+        assigned_agent: newLead.assignedAgent,
+        notes: newLead.notes,
+        project_name: newLead.projectName,
+        date_created: newLead.dateCreated,
+        date_updated: newLead.dateUpdated,
+        last_communication: newLead.lastCommunication,
+        score: newLead.score
+      };
+      
+      const { error } = await supabase.from("leads").upsert(dbPayload);
+      if (!error) {
+        savedToSupabase = true;
+      } else {
+        supabaseErr = error.message;
+      }
+    } catch (e: any) {
+      supabaseErr = e.message || String(e);
+    }
+
+    // 2. Append to local file-based retrieval cache so the React client can immediately ingest it upon checking
+    metaLeadsCache.push(newLead);
+    saveMetaLeadsCache();
+
+    // 3. Update sync timestamps in configuration
+    try {
+      const settingsPath = path.join(process.cwd(), "settings.json");
+      if (fs.existsSync(settingsPath)) {
+        const data = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
+        data.lastMetaSynced = new Date().toLocaleTimeString("en-US", { hour12: true }) + " (Local)";
+        fs.writeFileSync(settingsPath, JSON.stringify(data, null, 2), "utf-8");
+      }
+    } catch (e) {}
+
+    return res.json({
+      success: true,
+      message: "Lead processed and ingested successfully!",
+      savedToSupabase,
+      supabaseError: supabaseErr,
+      lead: newLead
+    });
+  } catch (err: any) {
+    console.error("[Meta Webhook Integration Error]", err);
+    return res.status(500).json({ error: err.message || "Failed to process incoming Webhook lead" });
+  }
+});
+
+// Endpoint: Fetch and flush Meta Ads ingested leads for CRM client syncing
+app.get("/api/meta-ads/incoming-leads", (req, res) => {
+  try {
+    loadMetaLeadsCache();
+    const flushedLeads = [...metaLeadsCache];
+    
+    // Clear cache immediately after retrieval to avoid duplicate ingests on frontend
+    metaLeadsCache = [];
+    saveMetaLeadsCache();
+    
+    return res.json({ leads: flushedLeads });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || "Failed to fetch ingested webhook leads cache" });
   }
 });
 

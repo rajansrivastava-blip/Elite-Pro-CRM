@@ -1,7 +1,8 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, User } from "firebase/auth";
 import firebaseConfig from "../firebase-applet-config.json";
-import { Lead, LeadSource, LeadStatus, LeadTemperature } from "./types";
+import { PRESET_USERS } from "./data";
+import { Lead, LeadSource, LeadStatus, LeadTemperature, User as CRMUser } from "./types";
 
 // Initialize Firebase App securely (avoiding duplicate initializations)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -188,16 +189,38 @@ export async function fetchGoogleSheetValues(
 
 // Fuzzy header match helper
 function findHeaderIndex(headers: string[], syns: string[]): number {
-  return headers.findIndex(h => {
-    if (!h) return false;
-    const norm = h.toLowerCase().replace(/[\s_-]/g, "");
-    return syns.some(syn => norm.includes(syn) || syn.includes(norm));
-  });
+  if (!headers || headers.length === 0) return -1;
+  const normalizedHeaders = headers.map(h => h ? String(h).trim().toLowerCase().replace(/[\s_-]/g, "") : "");
+  
+  // Pass 1: Try exact match (after normalization)
+  for (const syn of syns) {
+    const normSyn = syn.toLowerCase().replace(/[\s_-]/g, "");
+    const idx = normalizedHeaders.findIndex(h => h === normSyn);
+    if (idx !== -1) return idx;
+  }
+  
+  // Pass 2: Try partial match where the header contains the synonym symbol as a keyword
+  // (e.g. header is "project name" or "physical location", synonym is "project" or "location")
+  for (const syn of syns) {
+    const normSyn = syn.toLowerCase().replace(/[\s_-]/g, "");
+    if (!normSyn) continue;
+    
+    const idx = normalizedHeaders.findIndex(h => {
+      if (!h) return false;
+      // The header h must contain the synonym, and h must be at least as long as syn
+      // to avoid matching a shorter header to a longer synonym (e.g., matching header "name" to synonym "projectname")
+      return h.includes(normSyn) && h.length >= normSyn.length;
+    });
+    if (idx !== -1) return idx;
+  }
+  
+  return -1;
 }
 
 // Convert dynamic spreadsheet rows to CRM Leads
 export function mapSpreadsheetRowsToLeads(
-  rows: any[][]
+  rows: any[][],
+  systemUsers?: CRMUser[]
 ): Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] {
   if (rows.length < 2) return [];
 
@@ -218,6 +241,7 @@ export function mapSpreadsheetRowsToLeads(
   const projectIdx = findHeaderIndex(rawHeaders, ["project", "projectname", "property", "projectName"]);
   const statusIdx = findHeaderIndex(rawHeaders, ["status", "leadstatus", "stage"]);
   const tempIdx = findHeaderIndex(rawHeaders, ["temperature", "temp", "rating", "priority"]);
+  const agentIdx = findHeaderIndex(rawHeaders, ["assignagent", "assignedagent", "agent", "salesperson", "advisor", "sales", "assignedagentname", "namename"]);
 
   const resultLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] = [];
 
@@ -283,13 +307,31 @@ export function mapSpreadsheetRowsToLeads(
 
     const company = companyIdx !== -1 ? String(row[companyIdx] || "").trim() : "";
     const position = positionIdx !== -1 ? String(row[positionIdx] || "").trim() : "";
-    const budget = budgetIdx !== -1 ? String(row[budgetIdx] || "").trim() : "Not Specified";
-    const location = locationIdx !== -1 ? String(row[locationIdx] || "").trim() : "Not Specified";
+    const budget = budgetIdx !== -1 ? String(row[budgetIdx] || "").trim() : "";
+    const location = locationIdx !== -1 ? String(row[locationIdx] || "").trim() : "";
     const notes = notesIdx !== -1 ? String(row[notesIdx] || "").trim() : "Ingested from Google Sheets pipeline.";
     const projectName = projectIdx !== -1 ? String(row[projectIdx] || "").trim() : "";
 
-    // CRITICAL DIRECTIVE REQUIREMENT: "and all leads assign to Admin so that admin can assign to leads as per sales team requirements."
-    const assignedAgent = "Admin";
+    // Automatically assign to matching Sales Team or TL, otherwise fallback to "Admin"
+    let assignedAgent = "Admin";
+    const usersToSearch = systemUsers && systemUsers.length > 0 ? systemUsers : PRESET_USERS;
+    let assignmentMatched = false;
+
+    if (agentIdx !== -1 && row[agentIdx] !== undefined) {
+      const parsedAgentName = String(row[agentIdx]).trim();
+      if (parsedAgentName) {
+        const matchedUser = usersToSearch.find(u => {
+          const uName = (u.name || "").toLowerCase().trim();
+          const targetName = parsedAgentName.toLowerCase().trim();
+          return uName === targetName;
+        });
+
+        if (matchedUser && (matchedUser.role === "sales_team" || matchedUser.role === "team_leader" || matchedUser.role === "admin")) {
+          assignedAgent = matchedUser.name;
+          assignmentMatched = true;
+        }
+      }
+    }
 
     const lastCommunication = new Date().toISOString().split("T")[0];
 

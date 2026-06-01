@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Appointment, Lead } from "../types";
+import React, { useState, useMemo } from "react";
+import { Appointment, Lead, User as AppUser } from "../types";
 import { 
   Plus, 
   Calendar, 
@@ -21,6 +21,8 @@ import {
 interface AppointmentsListProps {
   appointments: Appointment[];
   leads: Lead[];
+  users: AppUser[];
+  currentUser: AppUser | null;
   onAddAppointment: (app: Omit<Appointment, "id" | "isCompleted">) => void;
   onUpdateAppointment: (app: Appointment) => void;
   onDeleteAppointment: (id: string) => void;
@@ -30,6 +32,8 @@ interface AppointmentsListProps {
 export default function AppointmentsList({
   appointments,
   leads,
+  users,
+  currentUser,
   onAddAppointment,
   onUpdateAppointment,
   onDeleteAppointment,
@@ -38,8 +42,85 @@ export default function AppointmentsList({
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingApp, setEditingApp] = useState<Appointment | null>(null);
-  const [filterType, setFilterType] = useState<string>("all");
-  const [filterStatus, setFilterStatus] = useState<string>("all"); // "all", "pending", "completed"
+  const [reminderFilter, setReminderFilter] = useState<"all" | "overdue" | "due_today" | "pending" | "upcoming">("all");
+
+  const [selectedTL, setSelectedTL] = useState<string>(() => {
+    if (currentUser && currentUser.role === "team_leader") {
+      return currentUser.id;
+    }
+    return "all";
+  });
+  const [selectedAgentName, setSelectedAgentName] = useState<string>("all");
+  const [selectedProject, setSelectedProject] = useState<string>("all");
+  const [selectedLocation, setSelectedLocation] = useState<string>("all");
+  const [selectedBudget, setSelectedBudget] = useState<string>("all");
+
+  const [projectSearchQuery, setProjectSearchQuery] = useState<string>("");
+  const [locationSearchQuery, setLocationSearchQuery] = useState<string>("");
+  const [budgetMinQuery, setBudgetMinQuery] = useState<string>("");
+  const [budgetMaxQuery, setBudgetMaxQuery] = useState<string>("");
+
+  // Dynamic lists of unique values from visible leads for filter selects
+  const projectsPool = useMemo(() => {
+    const leadNames = new Set(leads.map(l => l.name.toLowerCase().trim()));
+    const userNames = new Set((users || []).map(u => u.name.toLowerCase().trim()));
+    return Array.from(new Set(leads.map(l => l.projectName || "").filter(Boolean)))
+      .filter(proj => {
+        const projLower = proj.toLowerCase().trim();
+        return !leadNames.has(projLower) && !userNames.has(projLower);
+      })
+      .sort();
+  }, [leads, users]);
+
+  const locationsPool = useMemo(() => {
+    return Array.from(new Set(leads.map(l => l.location || "").filter(Boolean))).sort();
+  }, [leads]);
+
+  const budgetsPool = useMemo(() => {
+    return Array.from(new Set(leads.map(l => l.budget || "").filter(Boolean))).sort();
+  }, [leads]);
+
+  // Reset agent filter when TL filter changes to ensure consistent display
+  const handleTLChange = (tlId: string) => {
+    setSelectedTL(tlId);
+    setSelectedAgentName("all");
+  };
+
+  // Get list of TL users for Super Admin / Admin dropdowns
+  const tlUsers = useMemo(() => {
+    return users.filter(u => u.role === "team_leader");
+  }, [users]);
+
+  // Get list of Sales Team users based on currentUser role and selected TL
+  const salesUsers = useMemo(() => {
+    if (!currentUser) return [];
+    
+    if (currentUser.role === "super_admin" || currentUser.role === "admin") {
+      if (selectedTL === "all") {
+        return users.filter(u => u.role === "sales_team");
+      } else {
+        return users.filter(u => u.role === "sales_team" && u.teamLeaderId === selectedTL);
+      }
+    }
+    
+    if (currentUser.role === "team_leader") {
+      // TL can only see their team members
+      return users.filter(u => u.role === "sales_team" && u.teamLeaderId === currentUser.id);
+    }
+    
+    return [];
+  }, [users, currentUser, selectedTL]);
+
+  // Expand with team leader themselves if applicable
+  const salesUsersOptions = useMemo(() => {
+    if (!currentUser) return [];
+    const pool = [...salesUsers];
+    if (currentUser.role === "team_leader") {
+      // Add TL themselves to the filter list so they can view only their own reminders
+      pool.unshift(currentUser);
+    }
+    return pool;
+  }, [salesUsers, currentUser]);
 
   // Form State
   const [newAppForm, setNewAppForm] = useState({
@@ -128,14 +209,169 @@ export default function AppointmentsList({
   // Get current date string in UTC / local standard to detect today relative to mock time (2026-05-25)
   const SYSTEM_CURRENT_DATE = "2026-05-25"; 
 
-  // Filtered appointments list
-  const filteredApps = appointments.filter(app => {
-    const typeMatch = filterType === "all" || app.type === filterType;
-    const statusMatch = filterStatus === "all" 
-      || (filterStatus === "completed" && app.isCompleted)
-      || (filterStatus === "pending" && !app.isCompleted);
-    return typeMatch && statusMatch;
-  }).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  // Snooze function to add 1 day to the date (YYYY-MM-DD format)
+  const snoozeAppointmentOneDay = (app: Appointment) => {
+    try {
+      const currentDate = new Date(app.date);
+      if (isNaN(currentDate.getTime())) {
+        onUpdateAppointment({
+          ...app,
+          date: "2026-05-26"
+        });
+        return;
+      }
+      currentDate.setDate(currentDate.getDate() + 1);
+      const nextDateStr = currentDate.toISOString().split("T")[0];
+      onUpdateAppointment({
+        ...app,
+        date: nextDateStr
+      });
+    } catch (e) {
+      console.error("Failed to postpone reminder:", e);
+    }
+  };
+
+  // Helper to parse capital budget string values into a numeric amount in Crores (Cr)
+  const parseBudgetValue = (b: string): number => {
+    if (!b) return 0;
+    const sanitized = b
+      .replace(/â\u0082¹/g, "₹")
+      .replace(/â‚¹/g, "₹")
+      .replace(/â\u0082/g, "₹")
+      .replace(/â\u0092¹/g, "₹")
+      .replace(/â\u0092/g, "₹");
+    const cleaned = sanitized.replace(/[₹$cr\sM]/gi, "");
+    const val = parseFloat(cleaned);
+    if (!isNaN(val)) {
+      if (b.toLowerCase().includes("lakh") || b.toLowerCase().includes("l")) {
+        return val / 100; // normalize and scale down to Cr
+      }
+      return val;
+    }
+    return 0;
+  };
+
+  // Filter appointments by Team & Agent hierarchy first
+  const teamFilteredApps = useMemo(() => {
+    return appointments.filter(app => {
+      const lead = leads.find(l => l.id === app.leadId);
+      if (!lead) {
+        // Safe-fallback for general items if no specific filters are chosen
+        return (
+          selectedTL === "all" &&
+          selectedAgentName === "all" &&
+          selectedProject === "all" &&
+          selectedLocation === "all" &&
+          selectedBudget === "all" &&
+          projectSearchQuery.trim() === "" &&
+          locationSearchQuery.trim() === "" &&
+          budgetMinQuery.trim() === "" &&
+          budgetMaxQuery.trim() === ""
+        );
+      }
+
+      const agentUser = users.find(u => u.name.toLowerCase() === lead.assignedAgent.toLowerCase());
+
+      // TL Filter check
+      if (selectedTL !== "all") {
+        if (!agentUser) return false;
+        const isAgentThatTL = agentUser.role === 'team_leader' && agentUser.id === selectedTL;
+        const isUnderThatTL = agentUser.teamLeaderId === selectedTL;
+        if (!isAgentThatTL && !isUnderThatTL) return false;
+      }
+
+      // Advisor Filter check
+      if (selectedAgentName !== "all") {
+        if (lead.assignedAgent.toLowerCase() !== selectedAgentName.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // Project Filter check
+      if (selectedProject !== "all") {
+        if ((lead.projectName || "").toLowerCase() !== selectedProject.toLowerCase()) {
+          return false;
+        }
+      }
+      if (projectSearchQuery.trim() !== "") {
+        if (!(lead.projectName || "").toLowerCase().includes(projectSearchQuery.trim().toLowerCase())) {
+          return false;
+        }
+      }
+
+      // Location Filter check
+      if (selectedLocation !== "all") {
+        if ((lead.location || "").toLowerCase() !== selectedLocation.toLowerCase()) {
+          return false;
+        }
+      }
+      if (locationSearchQuery.trim() !== "") {
+        if (!(lead.location || "").toLowerCase().includes(locationSearchQuery.trim().toLowerCase())) {
+          return false;
+        }
+      }
+
+      // Budget Filter check
+      if (selectedBudget !== "all") {
+        if ((lead.budget || "").toLowerCase() !== selectedBudget.toLowerCase()) {
+          return false;
+        }
+      }
+
+      // Budget Range Filter Check (Min / Max in Crores)
+      if (budgetMinQuery.trim() !== "" || budgetMaxQuery.trim() !== "") {
+        const leadBudgetValue = parseBudgetValue(lead.budget || "");
+        if (budgetMinQuery.trim() !== "") {
+          const minVal = parseFloat(budgetMinQuery);
+          if (!isNaN(minVal) && leadBudgetValue < minVal) return false;
+        }
+        if (budgetMaxQuery.trim() !== "") {
+          const maxVal = parseFloat(budgetMaxQuery);
+          if (!isNaN(maxVal) && leadBudgetValue > maxVal) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [
+    appointments, 
+    selectedTL, 
+    selectedAgentName, 
+    selectedProject, 
+    selectedLocation, 
+    selectedBudget, 
+    projectSearchQuery, 
+    locationSearchQuery, 
+    budgetMinQuery, 
+    budgetMaxQuery, 
+    leads, 
+    users
+  ]);
+
+  const overdueCount = teamFilteredApps.filter(app => !app.isCompleted && app.date < SYSTEM_CURRENT_DATE).length;
+  const dueTodayCount = teamFilteredApps.filter(app => app.date === SYSTEM_CURRENT_DATE && !app.isCompleted).length;
+  const pendingCount = teamFilteredApps.filter(app => !app.isCompleted).length;
+  const upcomingCount = teamFilteredApps.filter(app => !app.isCompleted && app.date > SYSTEM_CURRENT_DATE).length;
+  const allCount = teamFilteredApps.length;
+
+  // Filtered appointments list for rendering
+  const filteredApps = useMemo(() => {
+    return teamFilteredApps.filter(app => {
+      if (reminderFilter === "overdue") {
+        return !app.isCompleted && app.date < SYSTEM_CURRENT_DATE;
+      }
+      if (reminderFilter === "due_today") {
+        return app.date === SYSTEM_CURRENT_DATE;
+      }
+      if (reminderFilter === "pending") {
+        return !app.isCompleted;
+      }
+      if (reminderFilter === "upcoming") {
+        return !app.isCompleted && app.date > SYSTEM_CURRENT_DATE;
+      }
+      return true; // "all"
+    }).sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+  }, [teamFilteredApps, reminderFilter]);
 
   // Immediate today warnings for accessibility & attention management
   const todayCount = appointments.filter(a => a.date === SYSTEM_CURRENT_DATE && !a.isCompleted).length;
@@ -146,7 +382,7 @@ export default function AppointmentsList({
       {/* Upper Announcement Box with Immediate Reminders Warning */}
       <div className={`p-5 rounded-2xl border transition-all flex flex-col md:flex-row justify-between items-start md:items-center gap-4
         ${todayCount > 0 
-          ? "bg-amber-500/10 border-amber-500/20 text-amber-100" 
+          ? "bg-amber-500/10 border-amber-500/20 text-amber-100 animate-none" 
           : darkMode 
             ? "bg-slate-900 border-slate-850" 
             : "bg-white border-slate-100 shadow-sm"}`}
@@ -177,45 +413,349 @@ export default function AppointmentsList({
         </button>
       </div>
 
-      {/* Control Filters Row */}
-      <div className={`p-4 rounded-xl border flex flex-wrap items-center justify-between gap-3
-        ${darkMode ? "bg-slate-950 border-slate-900" : "bg-slate-50 border-slate-150"}`}
-      >
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs font-mono text-slate-400 uppercase tracking-wider font-semibold">Filter Type:</span>
-          {/* Appointment Type option tabs */}
-          {["all", "site_visit", "meeting", "call", "followup"].map((type) => (
+      {/* Reminder Strategy & Status Filter Control Bento Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+        {[
+          {
+            key: "all" as const,
+            label: "All Reminders",
+            icon: Bell,
+            count: allCount,
+            activeClass: "bg-teal-500/15 border-teal-500/40 text-teal-400 dark:text-teal-300 shadow-[0_0_12px_rgba(20,184,166,0.1)]",
+            inactiveClass: "bg-slate-900/40 border-slate-800 text-slate-400 hover:text-white hover:bg-slate-900/60",
+            lightActiveClass: "bg-teal-50 border-teal-350 text-teal-700 shadow-sm",
+            lightInactiveClass: "bg-white border-slate-200 text-slate-600 hover:text-slate-950 hover:bg-slate-50",
+            iconColor: "text-teal-400"
+          },
+          {
+            key: "overdue" as const,
+            label: "Overdue",
+            icon: AlertCircle,
+            count: overdueCount,
+            activeClass: "bg-rose-500/15 border-rose-500/40 text-rose-450 dark:text-rose-300 shadow-[0_0_12px_rgba(244,63,94,0.1)] animate-pulse",
+            inactiveClass: "bg-slate-900/40 border-slate-800 text-slate-400 hover:text-rose-400 hover:bg-slate-900/60",
+            lightActiveClass: "bg-rose-55 border-rose-300 text-rose-700 shadow-sm",
+            lightInactiveClass: "bg-white border-slate-200 text-slate-600 hover:text-rose-600 hover:bg-slate-50",
+            iconColor: "text-rose-420"
+          },
+          {
+            key: "due_today" as const,
+            label: "Due Today",
+            icon: Clock,
+            count: dueTodayCount,
+            activeClass: "bg-amber-500/15 border-amber-500/40 text-amber-500 dark:text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.1)]",
+            inactiveClass: "bg-slate-900/40 border-slate-800 text-slate-400 hover:text-amber-400 hover:bg-slate-900/60",
+            lightActiveClass: "bg-amber-50 border-amber-250 text-amber-700 shadow-sm",
+            lightInactiveClass: "bg-white border-slate-200 text-slate-600 hover:text-amber-600 hover:bg-slate-50",
+            iconColor: "text-amber-400"
+          },
+          {
+            key: "pending" as const,
+            label: "Pending",
+            icon: Calendar,
+            count: pendingCount,
+            activeClass: "bg-indigo-500/15 border-indigo-500/40 text-indigo-400 dark:text-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.1)]",
+            inactiveClass: "bg-slate-900/40 border-slate-800 text-slate-400 hover:text-indigo-400 hover:bg-slate-900/60",
+            lightActiveClass: "bg-indigo-50 border-indigo-250 text-indigo-700 shadow-sm",
+            lightInactiveClass: "bg-white border-slate-200 text-slate-600 hover:text-indigo-600 hover:bg-slate-50",
+            iconColor: "text-indigo-400"
+          },
+          {
+            key: "upcoming" as const,
+            label: "Upcoming",
+            icon: Mail,
+            count: upcomingCount,
+            activeClass: "bg-purple-500/15 border-purple-500/40 text-purple-400 dark:text-purple-300 shadow-[0_0_12px_rgba(168,85,247,0.1)]",
+            inactiveClass: "bg-slate-900/40 border-slate-800 text-slate-400 hover:text-purple-400 hover:bg-slate-900/60",
+            lightActiveClass: "bg-purple-55 border-purple-250 text-purple-705 shadow-sm",
+            lightInactiveClass: "bg-white border-slate-200 text-slate-600 hover:text-purple-600 hover:bg-slate-50",
+            iconColor: "text-purple-400"
+          }
+        ].map((item) => {
+          const IconComponent = item.icon;
+          const isActive = reminderFilter === item.key;
+          const cardStyle = isActive 
+            ? (darkMode ? item.activeClass : item.lightActiveClass)
+            : (darkMode ? item.inactiveClass : item.lightInactiveClass);
+          
+          return (
             <button
-              key={type}
-              id={`filter-appt-type-${type}`}
-              onClick={() => setFilterType(type)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition select-none
-                ${filterType === type 
-                  ? "bg-teal-600 text-white" 
-                  : darkMode 
-                    ? "bg-slate-905 border border-slate-800 text-slate-350 hover:bg-slate-800" 
-                    : "bg-white border border-slate-200 text-slate-700 hover:bg-slate-100"}`}
+              key={item.key}
+              id={`reminder-tab-filter-${item.key}`}
+              onClick={() => setReminderFilter(item.key)}
+              className={`p-3 rounded-xl border text-left transition-all duration-200 cursor-pointer active:scale-95 flex flex-col justify-between gap-3 relative overflow-hidden group select-none
+                ${cardStyle}`}
             >
-              {type === "all" ? "All Formats" : getTypeMeta(type as Appointment["type"])?.label || type}
+              <div className="flex items-center justify-between w-full">
+                <div className={`p-1.5 rounded-lg transition-transform duration-300 group-hover:scale-110
+                  ${isActive 
+                    ? (darkMode ? "bg-slate-800 text-teal-400" : "bg-teal-50 text-teal-600") 
+                    : (darkMode ? "bg-slate-950/80 text-slate-500" : "bg-slate-50 text-slate-400")}`}
+                >
+                  <IconComponent size={14} />
+                </div>
+                
+                <span className={`text-xs font-mono font-bold px-2 py-0.5 rounded-full border transition-all duration-200
+                  ${isActive 
+                    ? "bg-teal-500/10 border-teal-500/20" 
+                    : "bg-slate-950/20 border-slate-100/10 dark:text-slate-400 text-slate-600"}`}
+                >
+                  {item.count}
+                </span>
+              </div>
+              
+              <div className="mt-1">
+                <p className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Advisory</p>
+                <h4 className="text-xs font-bold font-sans tracking-tight mt-0.5">{item.label}</h4>
+              </div>
             </button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-slate-400 uppercase tracking-wider font-semibold">Status:</span>
-          <select
-            id="appt-status-select-filter"
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border cursor-pointer
-              ${darkMode ? "bg-slate-900 border-slate-800 text-slate-205" : "bg-white border-slate-200 text-slate-700"}`}
-          >
-            <option value="all">⚡ All Statuses</option>
-            <option value="pending">⏳ Pending Sessions</option>
-            <option value="completed">✅ Completed Sessions</option>
-          </select>
-        </div>
+          );
+        })}
       </div>
+
+      {/* Corporate Reminders Filter Grid (Project, Location, Budget, Team & Sales Advisor) */}
+      {currentUser && (
+        <div className={`p-4.5 rounded-2xl border transition-all flex flex-col gap-4
+          ${darkMode 
+            ? "bg-slate-900 border-slate-850" 
+            : "bg-white border-slate-150 shadow-sm"}`}
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-xl flex-shrink-0 ${darkMode ? "bg-teal-500/10 text-teal-400" : "bg-teal-50 text-teal-600"}`}>
+                <User size={16} />
+              </div>
+              <div>
+                <h4 className={`text-xs font-mono font-bold uppercase tracking-wider ${darkMode ? "text-slate-350" : "text-slate-650"}`}>
+                  Corporate Reminders Filtering Matrix
+                </h4>
+                <p className="text-[10px] text-slate-450 dark:text-slate-400 mt-0.5">
+                  Filter meeting and site visit rosters by sales hierarchies, project complexes, geography, or budget categories.
+                </p>
+              </div>
+            </div>
+
+            {/* Clear filters trigger */}
+            {((selectedTL !== "all" && (currentUser.role === "super_admin" || currentUser.role === "admin")) || 
+              selectedAgentName !== "all" || 
+              selectedProject !== "all" || 
+              selectedLocation !== "all" || 
+              selectedBudget !== "all" ||
+              projectSearchQuery !== "" ||
+              locationSearchQuery !== "" ||
+              budgetMinQuery !== "" ||
+              budgetMaxQuery !== "") && (
+              <button
+                id="clear-all-reminder-filters-btn"
+                onClick={() => {
+                  if (currentUser.role === "super_admin" || currentUser.role === "admin") {
+                    setSelectedTL("all");
+                  }
+                  setSelectedAgentName("all");
+                  setSelectedProject("all");
+                  setSelectedLocation("all");
+                  setSelectedBudget("all");
+                  setProjectSearchQuery("");
+                  setLocationSearchQuery("");
+                  setBudgetMinQuery("");
+                  setBudgetMaxQuery("");
+                }}
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-semibold cursor-pointer transition flex items-center gap-1.5 active:scale-95 border self-start sm:self-auto
+                  ${darkMode 
+                    ? "bg-rose-500/10 border-rose-500/20 text-rose-400 hover:bg-rose-500/20" 
+                    : "bg-rose-50 border-rose-105 text-rose-700 hover:bg-rose-100"}`}
+              >
+                <X size={12} />
+                Reset Filters
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            {/* Team Leader Select (Admins/Super Admins only) */}
+            {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") ? (
+              <div className="flex flex-col gap-1 w-full">
+                <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Team Leader</span>
+                <select
+                  id="filter-appt-tl-select"
+                  value={selectedTL}
+                  onChange={(e) => handleTLChange(e.target.value)}
+                  className={`px-3 py-2 text-xs font-semibold rounded-xl border cursor-pointer w-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                    ${darkMode 
+                      ? "bg-slate-950 border-slate-800 text-slate-205 focus:border-teal-500" 
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                >
+                  <option value="all">📂 (All TLs)</option>
+                  {tlUsers.map(user => (
+                    <option key={user.id} value={user.id}>
+                      👔 {user.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              currentUser.role === "team_leader" && (
+                <div className="flex flex-col gap-1 w-full">
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Team Leader</span>
+                  <div className={`px-3 py-2 text-xs font-semibold rounded-xl border w-full select-none opacity-80 font-mono flex items-center gap-1.5
+                    ${darkMode ? "bg-slate-900/60 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-500"}`}
+                  >
+                    👔 {currentUser.name} (You)
+                  </div>
+                </div>
+              )
+            )}
+
+            {/* Sales Advisor / Agent Select (Admins, Super Admins, TLs) */}
+            {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin" || currentUser.role === "team_leader") ? (
+              <div className="flex flex-col gap-1 w-full">
+                <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">
+                  {currentUser.role === "team_leader" ? "Team Member" : "Sales Advisor"}
+                </span>
+                <select
+                  id="filter-appt-agent-select"
+                  value={selectedAgentName}
+                  onChange={(e) => setSelectedAgentName(e.target.value)}
+                  className={`px-3 py-2 text-xs font-semibold rounded-xl border cursor-pointer w-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                    ${darkMode 
+                      ? "bg-slate-950 border-slate-800 text-slate-205 focus:border-teal-500" 
+                      : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"}`}
+                >
+                  <option value="all">🛡️ (All Members)</option>
+                  {salesUsersOptions.map(user => {
+                    const labelPrefix = user.role === "team_leader" ? "👔" : "👤";
+                    const suffix = user.id === currentUser.id ? " (You)" : "";
+                    return (
+                      <option key={user.id} value={user.name}>
+                        {labelPrefix} {user.name}{suffix}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1 w-full">
+                <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Assigned To</span>
+                <div className={`px-3 py-2 text-xs font-semibold rounded-xl border w-full select-none opacity-80 font-mono flex items-center gap-1.5
+                  ${darkMode ? "bg-slate-900/60 border-slate-800 text-slate-400" : "bg-slate-50 border-slate-200 text-slate-500"}`}
+                >
+                  👤 {currentUser.name} (You)
+                </div>
+              </div>
+            )}
+
+            {/* Project Filter */}
+            <div className="flex flex-col gap-1 w-full">
+              <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Project</span>
+              <input
+                type="text"
+                id="filter-appt-project-search"
+                placeholder="🔍 Search project name..."
+                value={projectSearchQuery}
+                onChange={(e) => setProjectSearchQuery(e.target.value)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-xl border w-full mb-1 transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                  ${darkMode 
+                    ? "bg-slate-950 border-slate-800 text-slate-205 placeholder-slate-650 focus:border-teal-500" 
+                    : "bg-white border-slate-250 text-slate-705 placeholder-slate-400 hover:bg-slate-50"}`}
+              />
+              <select
+                id="filter-appt-project-select"
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value)}
+                className={`px-3 py-1.5 text-[11px] font-semibold rounded-xl border cursor-pointer w-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-teal-500/25
+                  ${darkMode 
+                    ? "bg-slate-900 border-slate-800 text-slate-405 focus:border-teal-500" 
+                    : "bg-slate-50 border-slate-200 text-slate-505 hover:bg-slate-100"}`}
+              >
+                <option value="all">🏢 (Quick select...)</option>
+                {projectsPool.map(proj => (
+                  <option key={proj} value={proj}>
+                    🏢 {proj}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Location Filter */}
+            <div className="flex flex-col gap-1 w-full">
+              <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Geography / Location</span>
+              <input
+                type="text"
+                id="filter-appt-location-search"
+                placeholder="🔍 Search location..."
+                value={locationSearchQuery}
+                onChange={(e) => setLocationSearchQuery(e.target.value)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-xl border w-full mb-1 transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                  ${darkMode 
+                    ? "bg-slate-950 border-slate-800 text-slate-205 placeholder-slate-650 focus:border-teal-500" 
+                    : "bg-white border-slate-250 text-slate-705 placeholder-slate-400 hover:bg-slate-50"}`}
+              />
+              <select
+                id="filter-appt-location-select"
+                value={selectedLocation}
+                onChange={(e) => setSelectedLocation(e.target.value)}
+                className={`px-3 py-1.5 text-[11px] font-semibold rounded-xl border cursor-pointer w-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-teal-500/25
+                  ${darkMode 
+                    ? "bg-slate-900 border-slate-800 text-slate-405 focus:border-teal-500" 
+                    : "bg-slate-50 border-slate-200 text-slate-505 hover:bg-slate-100"}`}
+              >
+                <option value="all">📍 (Quick select...)</option>
+                {locationsPool.map(loc => (
+                  <option key={loc} value={loc}>
+                    📍 {loc}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Budget Filter */}
+            <div className="flex flex-col gap-1 w-full">
+              <span className="text-[9px] font-mono font-bold uppercase tracking-wider opacity-60">Capital Budget (Range)</span>
+              <div className="flex items-center gap-1 mb-1">
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="Min Cr"
+                  value={budgetMinQuery}
+                  onChange={(e) => setBudgetMinQuery(e.target.value)}
+                  className={`px-2 py-1 text-[11px] font-semibold rounded-lg border w-1/2 transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                    ${darkMode 
+                      ? "bg-slate-950 border-slate-800 text-teal-400 placeholder-slate-650 focus:border-teal-500" 
+                      : "bg-white border-slate-200 text-teal-700 placeholder-slate-400 hover:bg-slate-50"}`}
+                />
+                <span className="text-[9px] font-bold opacity-40">to</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  placeholder="Max Cr"
+                  value={budgetMaxQuery}
+                  onChange={(e) => setBudgetMaxQuery(e.target.value)}
+                  className={`px-2 py-1 text-[11px] font-semibold rounded-lg border w-1/2 transition-all focus:outline-none focus:ring-2 focus:ring-teal-500/20
+                    ${darkMode 
+                      ? "bg-slate-950 border-slate-800 text-teal-400 placeholder-slate-650 focus:border-teal-500" 
+                      : "bg-white border-slate-200 text-teal-700 placeholder-slate-400 hover:bg-slate-50"}`}
+                />
+              </div>
+              <select
+                id="filter-appt-budget-select"
+                value={selectedBudget}
+                onChange={(e) => setSelectedBudget(e.target.value)}
+                className={`px-3 py-1.5 text-[11px] font-semibold rounded-xl border cursor-pointer w-full transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-teal-500/25
+                  ${darkMode 
+                    ? "bg-slate-900 border-slate-800 text-slate-405 focus:border-teal-500" 
+                    : "bg-slate-50 border-slate-200 text-slate-505 hover:bg-slate-100"}`}
+              >
+                <option value="all">💰 (Quick select...)</option>
+                {budgetsPool.map(bud => (
+                  <option key={bud} value={bud}>
+                    💰 {bud}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Structured Alignment List */}
       <div className="space-y-3.5">
@@ -224,6 +764,22 @@ export default function AppointmentsList({
             const meta = getTypeMeta(app.type);
             const Icon = meta?.icon || Calendar;
             const isToday = app.date === SYSTEM_CURRENT_DATE;
+
+            // Resolve Team Leader (TL) and Sales Agent advisor names
+            const lead = leads.find(l => l.id === app.leadId);
+            let tlName = "";
+            let salesAgentName = lead?.assignedAgent || "";
+            if (lead) {
+              const agentUser = users.find(u => u.name.toLowerCase() === lead.assignedAgent.toLowerCase());
+              if (agentUser) {
+                if (agentUser.teamLeaderId) {
+                  const tlUser = users.find(u => u.id === agentUser.teamLeaderId);
+                  if (tlUser) tlName = tlUser.name;
+                } else if (agentUser.role === 'team_leader') {
+                  tlName = agentUser.name;
+                }
+              }
+            }
 
             return (
               <div
@@ -292,6 +848,25 @@ export default function AppointmentsList({
                           <span>Client: {app.leadName}</span>
                         </div>
                       )}
+                      
+                      {salesAgentName && (
+                        <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium hover:scale-105 transition-transform select-none
+                          ${darkMode ? "bg-slate-800/80 text-teal-400" : "bg-teal-50 text-teal-700"}`}
+                        >
+                          <span className={`w-1.5 h-1.5 rounded-full bg-teal-400`} />
+                          <span className="opacity-60 text-[9px] uppercase font-bold tracking-wider mr-0.5">Advisor:</span>
+                          <span>{salesAgentName}</span>
+                        </div>
+                      )}
+                      {tlName && (
+                        <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono font-medium hover:scale-105 transition-transform select-none
+                          ${darkMode ? "bg-slate-800/80 text-emerald-400" : "bg-emerald-50 text-emerald-700"}`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                          <span className="opacity-60 text-[9px] uppercase font-bold tracking-wider mr-0.5">TL:</span>
+                          <span>{tlName}</span>
+                        </div>
+                      )}
                     </div>
 
                     {app.notes && (
@@ -304,8 +879,24 @@ export default function AppointmentsList({
                 </div>
 
                 {/* Right side alignment: Reminder Active status toggle and action parameters */}
-                <div className="flex items-center gap-3 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0 border-slate-100/10">
+                <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end border-t md:border-t-0 pt-3 md:pt-0 border-slate-100/10">
                   
+                  {/* Quick Snooze Button to Postpone 1 Day */}
+                  {!app.isCompleted && (
+                    <button
+                      id={`quick-snooze-${app.id}`}
+                      onClick={() => snoozeAppointmentOneDay(app)}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-mono font-medium flex items-center gap-1.5 cursor-pointer transition select-none active:scale-95
+                        ${darkMode
+                          ? "bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20"
+                          : "bg-amber-50 border-amber-200 text-amber-800 hover:bg-amber-100"}`}
+                      title="Postpone this reminder target by +1 day"
+                    >
+                      <Clock size={12} className="text-amber-500 animate-pulse" />
+                      <span>Postpone 1 Day</span>
+                    </button>
+                  )}
+
                   {/* Reminder alert active state button */}
                   <button
                     id={`toggle-reminder-${app.id}`}
@@ -323,12 +914,12 @@ export default function AppointmentsList({
                     {app.reminderActive ? (
                       <>
                         <Bell size={13} className="text-teal-400 fill-teal-400/10 animate-bounce" />
-                        Reminder Active
+                        Reminder
                       </>
                     ) : (
                       <>
                         <BellOff size={13} />
-                        Muted
+                        Mute
                       </>
                     )}
                   </button>

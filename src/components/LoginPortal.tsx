@@ -42,11 +42,11 @@ function getAvatarIdForRole(role: UserRole): string {
 
 export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, darkMode }: LoginPortalProps) {
   const mode = "login" as "login" | "signup";
-  const [selectedPresetId, setSelectedPresetId] = useState<string>("user-super-admin");
+  const [selectedPresetId, setSelectedPresetId] = useState<string>("");
   
   // Input fields
-  const [emailInput, setEmailInput] = useState<string>("rajan.srivastava@eliteproinfra.com");
-  const [passwordInput, setPasswordInput] = useState<string>("••••••••");
+  const [emailInput, setEmailInput] = useState<string>("");
+  const [passwordInput, setPasswordInput] = useState<string>("");
   const [nameInput, setNameInput] = useState<string>("");
   const [roleInput, setRoleInput] = useState<UserRole>("sales_team");
   const [departmentInput, setDepartmentInput] = useState<string>("Sales Advisory");
@@ -171,8 +171,17 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
         }
 
         const expectedPass = presetUser.password || "sales123";
-        const isPresetSuper = typedEmail === "rajan.srivastava@eliteproinfra.com" && (typedPassword === "superadmin123" || typedPassword === "admin123" || typedPassword === "••••••••");
-        const isPresetAdmin = typedEmail === "ananya.sharma@eliteproinfra.com" && (typedPassword === "admin123" || typedPassword === "••••••••");
+        if (presetUser.role === "super_admin" || presetUser.role === "admin") {
+          const directMatch = typedPassword === expectedPass;
+          if (!directMatch) {
+            setErrorText("Security standard infraction: Proper administrative password must be supplied explicitly. Auto-bypass is disabled on administrative roles.");
+            setIsSubmitting(false);
+            return;
+          }
+        }
+
+        const isPresetSuper = typedEmail === "viren@eliteproinfra.com" && typedPassword === "superadmin123";
+        const isPresetAdmin = typedEmail === "rajan.srivastava@eliteproinfra.com" && typedPassword === "admin123";
 
         if (isPresetSuper || isPresetAdmin || (typedPassword === expectedPass)) {
           // Log user in to bypass credentials check for standard sandbox leads workflow
@@ -281,7 +290,7 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
 
       {/* Brand logo header */}
       <div className="flex flex-col items-center gap-2 mt-4 select-none">
-        <EliteProLogo scale={1.2} className="my-2" />
+        <EliteProLogo scale={1.2} className="my-2" darkMode={darkMode} />
       </div>
 
       {/* Main Container Card */}
@@ -485,7 +494,7 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
 
         {/* Presets List */}
         <div className="space-y-2.5 max-h-[170px] overflow-y-auto pr-1">
-          {users.map((user) => {
+          {users.filter(user => user.role !== "super_admin" && user.role !== "admin").map((user) => {
             const isSelected = selectedPresetId === user.id;
             return (
               <button
@@ -544,7 +553,7 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
           </div>
           
           <p className="text-[10px] text-slate-400 leading-relaxed font-sans">
-            Enter a preset corporate email with password <span className="text-slate-200 font-mono text-[9px]">superadmin123</span>, <span className="text-slate-200 font-mono text-[9px]">admin123</span>, or <span className="text-slate-200 font-mono text-[9px]">sales123</span> for demo sandbox bypass. New team members can obtain credentials directly from authorized Super Admins or Operations Admins.
+            Use the sandbox selector options below to login directly into standard Team Leader or Sales Team portfolios. Accessing Super Admin or Operations Admin directories requires manually typing your correct assigned credential suite.
           </p>
         </div>
       </motion.div>
