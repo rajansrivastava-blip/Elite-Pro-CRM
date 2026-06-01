@@ -912,24 +912,28 @@ export default function LeadPipeline({
               )}
             </button>
 
-            <button
-              id="register-lead-btn"
-              onClick={() => setIsAddModalOpen(true)}
-              className="px-4.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-teal-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
-            >
-              <Plus size={16} />
-              Register New Lead
-            </button>
+            {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") && (
+              <>
+                <button
+                  id="register-lead-btn"
+                  onClick={() => setIsAddModalOpen(true)}
+                  className="px-4.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-teal-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
+                >
+                  <Plus size={16} />
+                  Register New Lead
+                </button>
 
-            <button
-              id="import-spreadsheet-btn"
-              onClick={() => setIsImportModalOpen(true)}
-              className="px-4.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-550 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-emerald-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
-              title="Bulk import leads from CSV, XLS, or XLSX spreadsheets"
-            >
-              <FileSpreadsheet size={16} />
-              Import Spreadsheet
-            </button>
+                <button
+                  id="import-spreadsheet-btn"
+                  onClick={() => setIsImportModalOpen(true)}
+                  className="px-4.5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-550 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-emerald-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
+                  title="Bulk import leads from CSV, XLS, or XLSX spreadsheets"
+                >
+                  <FileSpreadsheet size={16} />
+                  Import Spreadsheet
+                </button>
+              </>
+            )}
           </div>
         </div>
 

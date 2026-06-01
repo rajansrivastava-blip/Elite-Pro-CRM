@@ -611,6 +611,15 @@ export default function App() {
 
   // Handler: Add Lead
   const handleAddLead = async (newLead: Omit<Lead, "id" | "dateCreated" | "dateUpdated">) => {
+    // Role-based Access Control authorization filter
+    if (currentUser?.role !== "super_admin" && currentUser?.role !== "admin") {
+      triggerAlert(
+        "Access Refused",
+        `Only users with Super Admin or Admin authorization can add data or register new leads.`
+      );
+      return;
+    }
+
     const id = "lead-" + (leads.length + 1) + "-" + Math.random().toString(36).substr(2, 4);
     const createdDate = new Date().toISOString().split("T")[0];
     const item: Lead = {
@@ -682,6 +691,15 @@ export default function App() {
 
   // Handler: Bulk Add Leads (CSV/Excel ingestion)
   const handleBulkAddLeads = async (newLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[]) => {
+    // Role-based Access Control authorization filter
+    if (currentUser?.role !== "super_admin" && currentUser?.role !== "admin") {
+      triggerAlert(
+        "Access Refused",
+        `Only users with Super Admin or Admin authorization can bulk import or add data.`
+      );
+      return;
+    }
+
     const createdDate = new Date().toISOString().split("T")[0];
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -771,6 +789,11 @@ export default function App() {
     leadsRef.current = leads;
   }, [leads]);
 
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   const usersRef = useRef(users);
   useEffect(() => {
     usersRef.current = users;
@@ -799,6 +822,12 @@ export default function App() {
   // Background Google Sheets Synchronization Loop
   useEffect(() => {
     const runSheetsBackgroundSync = async () => {
+      // Security check: Only trigger background sync for Admins or Super Admins
+      const u = currentUserRef.current;
+      if (!u || (u.role !== "super_admin" && u.role !== "admin")) {
+        return;
+      }
+
       const isAuto = autoSheetsSyncRef.current;
       const sheetUrlVal = sheetUrlRef.current;
       const sheetRangeVal = sheetRangeRef.current;
@@ -860,6 +889,12 @@ export default function App() {
   // Background Meta Ads Leads Inbound sync Loop
   useEffect(() => {
     const runMetaBackgroundSync = async () => {
+      // Security check: Only trigger background sync for Admins or Super Admins
+      const u = currentUserRef.current;
+      if (!u || (u.role !== "super_admin" && u.role !== "admin")) {
+        return;
+      }
+
       const isAuto = metaAutoIngestRef.current;
       if (!isAuto) return;
 
