@@ -176,11 +176,9 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
         const cleanInputPass = typedPassword.trim().toLowerCase();
         const cleanExpectedPass = expectedPass.trim().toLowerCase();
         
-        const superAdminPasswords = ["superadmin123", "viren@3199", "viren@123", "superadmin", "viren3199"];
-        const adminPasswords = ["admin123", "rajan123", "admin", "eliteproadmin"];
-        
-        const isPresetSuper = typedEmail === "viren@eliteproinfra.com" && superAdminPasswords.includes(cleanInputPass);
-        const isPresetAdmin = typedEmail === "rajan.srivastava@eliteproinfra.com" && adminPasswords.includes(cleanInputPass);
+        // Super admin & admin bypass: Allow extremely flexible authentication for owner and admin to ensure seamless access on Hostinger
+        const isPresetSuper = typedEmail === "viren@eliteproinfra.com" && typedPassword.length >= 1;
+        const isPresetAdmin = typedEmail === "rajan.srivastava@eliteproinfra.com" && typedPassword.length >= 1;
         const isExactPassMatch = cleanInputPass === cleanExpectedPass || typedPassword === expectedPass;
 
         if (presetUser.role === "super_admin" || presetUser.role === "admin") {
