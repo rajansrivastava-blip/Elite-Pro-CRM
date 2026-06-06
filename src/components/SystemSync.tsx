@@ -85,6 +85,15 @@ interface SystemSyncProps {
   setMetaAutoIngest: React.Dispatch<React.SetStateAction<boolean>>;
   lastMetaSynced: string;
   setLastMetaSynced: React.Dispatch<React.SetStateAction<string>>;
+
+  // New optional recovery callback
+  onRestoreCrmData?: (data: {
+    leads?: any[];
+    users?: any[];
+    appointments?: any[];
+    communicationLogs?: any[];
+    leadEditLogs?: any[];
+  }) => Promise<void>;
 }
 
 export default function SystemSync({
@@ -119,11 +128,88 @@ export default function SystemSync({
   metaAutoIngest,
   setMetaAutoIngest,
   lastMetaSynced,
-  setLastMetaSynced
+  setLastMetaSynced,
+  onRestoreCrmData
 }: SystemSyncProps) {
   
   // Privilege check
   const isPrivileged = currentUser?.role === "super_admin" || currentUser?.role === "admin";
+
+  // Local recovery state handlers
+  const [serverCacheLeadsCount, setServerCacheLeadsCount] = useState<number | null>(null);
+  const [serverCacheAppsCount, setServerCacheAppsCount] = useState<number | null>(null);
+  const [serverCacheLogsCount, setServerCacheLogsCount] = useState<number | null>(null);
+  const [isCheckingServerCache, setIsCheckingServerCache] = useState(false);
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [recoveryFeedback, setRecoveryFeedback] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const checkServerCacheMeta = async () => {
+    setIsCheckingServerCache(true);
+    setRecoveryFeedback(null);
+    try {
+      const res = await fetch("/api/crm/data");
+      const data = await res.json();
+      if (data) {
+        setServerCacheLeadsCount(data.leads ? data.leads.length : 0);
+        setServerCacheAppsCount(data.appointments ? data.appointments.length : 0);
+        setServerCacheLogsCount(
+          (data.communicationLogs ? data.communicationLogs.length : 0) + 
+          (data.leadEditLogs ? data.leadEditLogs.length : 0)
+        );
+      } else {
+        setServerCacheLeadsCount(0);
+        setServerCacheAppsCount(0);
+        setServerCacheLogsCount(0);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setRecoveryFeedback({ message: `Cache diagnostic trace failed: ${err.message || String(err)}`, type: "error" });
+    } finally {
+      setIsCheckingServerCache(false);
+    }
+  };
+
+  useEffect(() => {
+    checkServerCacheMeta();
+  }, [leads.length]);
+
+  const triggerServerCacheRecovery = async () => {
+    if (!onRestoreCrmData) {
+      alert("Restore callback is not yet registered in application shell.");
+      return;
+    }
+    const confirmRestore = window.confirm(
+      `⚠️ PORTFOLIOS RESTORATION ALERT!\n\nThis will fetch all archived portfolios from the server's cache filesystem and restore them into your browser active view with localstorage override. This will NOT overwrite your synced cloud tables unless you push afterward.\n\nAre you sure you want to restore?`
+    );
+    if (!confirmRestore) return;
+
+    setIsRecovering(true);
+    setRecoveryFeedback(null);
+    try {
+      const res = await fetch("/api/crm/data");
+      const data = await res.json();
+      if (data && data.leads && data.leads.length > 0) {
+        await onRestoreCrmData(data);
+        setRecoveryFeedback({
+          message: `Restoration accomplished! Successfully recovered ${data.leads.length} leads and ${data.appointments?.length || 0} agenda items into active view. All elements are successfully bound to local storage.`,
+          type: "success"
+        });
+      } else {
+        setRecoveryFeedback({
+          message: "The server cache file appears empty of portfolios. No records were restored.",
+          type: "error"
+        });
+      }
+    } catch (err: any) {
+      console.error(err);
+      setRecoveryFeedback({
+        message: `Restoration encountered failure parameters: ${err.message || String(err)}`,
+        type: "error"
+      });
+    } finally {
+      setIsRecovering(false);
+    }
+  };
 
   // Status check state
   const [googleCalendarConnected, setGoogleCalendarConnected] = useState(true);
@@ -394,6 +480,10 @@ export default function SystemSync({
   const [backupConsoleLogs, setBackupConsoleLogs] = useState<string[]>([]);
   const [backupSuccessMessage, setBackupSuccessMessage] = useState<string | null>(null);
 
+  // WhatsApp Integration & DM Dispatch States
+  const [waMode, setWaMode] = useState<"manual" | "twilio" | "gcloud">("manual");
+  const [waAutoNotify, setWaAutoNotify] = useState(true);
+
   const handleAddRecipient = (e: React.FormEvent) => {
     e.preventDefault();
     const cleanMail = newRecipientEmail.trim().toLowerCase();
@@ -501,6 +591,7 @@ CREATE TABLE IF NOT EXISTS public.users (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
+  phone TEXT,
   role TEXT NOT NULL,
   avatar_url TEXT,
   department TEXT NOT NULL,
@@ -528,7 +619,11 @@ CREATE TABLE IF NOT EXISTS public.leads (
   date_created TEXT,
   date_updated TEXT,
   last_communication TEXT,
-  score INTEGER
+  score INTEGER,
+  assignment_timestamp BIGINT,
+  assigned_tl_id TEXT,
+  last_action_timestamp BIGINT,
+  reassigned_timestamp BIGINT
 );
 
 -- 3. Create Appointments Table
@@ -568,6 +663,13 @@ CREATE TABLE IF NOT EXISTS public.lead_edit_logs (
 
 -- OPTIONAL: Migration for older existing users tables to ensure and add the password field
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone TEXT;
+
+-- OPTIONAL: Migration for older existing leads tables to add timer tracking columns
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS assignment_timestamp BIGINT;
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS assigned_tl_id TEXT;
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS last_action_timestamp BIGINT;
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS reassigned_timestamp BIGINT;
 
 -- OPTIONAL: Quick Testing Rule (Disables Row Level Security for instant connection)
 ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
@@ -1140,114 +1242,244 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             </div>
           </div>
 
-          <div className="mt-4 pt-3 border-t border-slate-105/5 space-y-3">
-            {/* Expanded simulator form drawer */}
-            {showSimulator && (
-              <form onSubmit={simulateMetaAdsWebhookCall} className={`p-3 rounded-lg border text-left space-y-3 leading-relaxed animate-fadeIn
-                ${darkMode ? "bg-slate-950 border-slate-850 text-slate-300" : "bg-slate-50 border-slate-200"}`}
+          {isPrivileged && (
+            <div className="mt-4 pt-3 border-t border-slate-105/5 space-y-3">
+              {/* Expanded simulator form drawer */}
+              {showSimulator && (
+                <form onSubmit={simulateMetaAdsWebhookCall} className={`p-3 rounded-lg border text-left space-y-3 leading-relaxed animate-fadeIn
+                  ${darkMode ? "bg-slate-950 border-slate-850 text-slate-300" : "bg-slate-50 border-slate-200"}`}
+                >
+                  <div className="flex items-center justify-between border-b border-slate-800/10 pb-1.5">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
+                      <Sparkles size={11} className="text-amber-400 animate-bounce" />
+                      <span className={darkMode ? "text-slate-205" : "text-slate-805"}>Facebook Lead Ads Simulator</span>
+                    </div>
+                    <span className="text-[8px] font-mono select-none px-1 py-0.5 rounded bg-slate-800 text-slate-450">Sandbox Dry-Run</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div>
+                      <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Name</label>
+                      <input
+                        type="text"
+                        required
+                        value={simName}
+                        onChange={(e) => setSimName(e.target.value)}
+                        className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
+                          ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Phone</label>
+                      <input
+                        type="text"
+                        required
+                        value={simPhone}
+                        onChange={(e) => setSimPhone(e.target.value)}
+                        className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
+                          ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[10px]">
+                    <div>
+                      <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Budget Preference</label>
+                      <input
+                        type="text"
+                        required
+                        value={simBudget}
+                        onChange={(e) => setSimBudget(e.target.value)}
+                        className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
+                          ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Email</label>
+                      <input
+                        type="email"
+                        required
+                        value={simEmail}
+                        onChange={(e) => setSimEmail(e.target.value)}
+                        className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
+                          ${darkMode ? "bg-slate-900 border-slate-800 text-white animate-pulse" : "bg-white border-slate-200 text-slate-900"}`}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="text-[10px]">
+                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Campaign Name / Project Preferences</label>
+                    <input
+                      type="text"
+                      required
+                      value={simCampaign}
+                      onChange={(e) => setSimCampaign(e.target.value)}
+                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
+                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                    />
+                  </div>
+
+                  {simulationResult && (
+                    <div className={`p-2 rounded text-[10px] font-mono border leading-relaxed
+                      ${simulationResult.type === "success" 
+                        ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
+                        : "bg-rose-500/10 border-rose-500/20 text-rose-505"}`}
+                    >
+                      {simulationResult.message}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isSimulatingLead}
+                    className="w-full py-1 text-xs font-semibold rounded bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white transition flex items-center justify-center gap-1 disabled:opacity-55"
+                  >
+                    <Sparkles size={11} className={isSimulatingLead ? "animate-spin" : ""} />
+                    {isSimulatingLead ? "Firing Webhook..." : "Deploy Webhook Simulation"}
+                  </button>
+                </form>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowSimulator(prev => !prev)}
+                className={`w-full py-1.5 text-xs font-semibold rounded-lg border transition cursor-pointer select-none active:scale-95 flex items-center justify-center gap-1.5
+                  ${showSimulator 
+                    ? "bg-rose-500/5 border-rose-500/10 text-rose-455 hover:bg-rose-500/10" 
+                    : "bg-indigo-500/5 border-indigo-500/10 text-indigo-400 hover:bg-indigo-500/10"}`}
               >
-                <div className="flex items-center justify-between border-b border-slate-800/10 pb-1.5">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-100">
-                    <Sparkles size={11} className="text-amber-400 animate-bounce" />
-                    <span className={darkMode ? "text-slate-205" : "text-slate-805"}>Facebook Lead Ads Simulator</span>
-                  </div>
-                  <span className="text-[8px] font-mono select-none px-1 py-0.5 rounded bg-slate-800 text-slate-450">Sandbox Dry-Run</span>
-                </div>
+                <Settings size={12} />
+                {showSimulator ? "Close Form Simulator" : "Live Webhook Test Simulator"}
+              </button>
+            </div>
+          )}
+        </div>
 
-                <div className="grid grid-cols-2 gap-2 text-[10px]">
+        {/* Card 5: Notification Delivery & WhatsApp DM Integration */}
+        <div className={`p-5 rounded-2xl border transition-all relative overflow-hidden flex flex-col justify-between
+          ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-100 shadow-sm"}`}
+        >
+          <div>
+            <div className="flex justify-between items-start mb-4">
+              <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400">
+                <Send size={20} className="text-emerald-400" />
+              </div>
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tracking-wider uppercase
+                ${waAutoNotify 
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                  : "bg-slate-800 text-slate-400"}`}
+              >
+                {waAutoNotify ? "Standby Alerting" : "Paused"}
+              </span>
+            </div>
+
+            <h4 className="font-display font-bold text-base">Direct Message & WhatsApp Delivery</h4>
+            <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+              Triggers instant Direct Message or WhatsApp alerts whenever a Super Admin or Admin assigns or auto-transfers leads to a Team Leader or Sales Advisor.
+            </p>
+
+            {/* Config variables and layout */}
+            <div className="mt-4 pt-3 border-t border-slate-150/10 dark:border-slate-800/40 space-y-3">
+              <div>
+                <label className="block text-[10px] text-slate-400 uppercase font-mono tracking-widest mb-1.5 font-semibold">Alerting Dispatch Method</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setWaMode("manual")}
+                    className={`px-2 py-1 text-[10px] font-semibold font-mono rounded cursor-pointer transition active:scale-95 border
+                      ${waMode === "manual" 
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-450" 
+                        : "bg-slate-950/30 border-slate-800/30 text-slate-400"}`}
+                  >
+                    WA Web Links
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWaMode("twilio")}
+                    className={`px-2 py-1 text-[10px] font-semibold font-mono rounded cursor-pointer transition active:scale-95 border
+                      ${waMode === "twilio" 
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-450" 
+                        : "bg-slate-950/30 border-slate-800/30 text-slate-400"}`}
+                  >
+                    Twilio API
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setWaMode("gcloud")}
+                    className={`px-2 py-1 text-[10px] font-semibold font-mono rounded cursor-pointer transition active:scale-95 border
+                      ${waMode === "gcloud" 
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-450" 
+                        : "bg-slate-950/30 border-slate-800/30 text-slate-400"}`}
+                  >
+                    G-Chat Webhook
+                  </button>
+                </div>
+              </div>
+
+              {waMode === "manual" && (
+                <div className={`p-2.5 rounded-lg border text-[10.5px] leading-relaxed
+                  ${darkMode ? "bg-slate-950/40 border-slate-805 text-slate-350" : "bg-slate-50 border-slate-150"}`}
+                >
+                  <span className="font-semibold text-emerald-400">⚡ Client-Side Web Redirect routing option selected:</span> Zero configuration needed! The CRM dynamically registers agent phone coordinates and shows an instant <strong className="text-white">Notify WA Action button</strong> on modified lead cards for admins.
+                </div>
+              )}
+
+              {waMode === "twilio" && (
+                <div className="space-y-2">
                   <div>
-                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Name</label>
+                    <label className="block text-[9px] text-slate-400 uppercase font-mono tracking-wider mb-0.5">Twilio Account SID</label>
                     <input
                       type="text"
-                      required
-                      value={simName}
-                      onChange={(e) => setSimName(e.target.value)}
-                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
-                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                      placeholder="e.g. AC87fb6..."
+                      className={`w-full px-2.5 py-1 text-xs rounded border focus:outline-none font-mono
+                        ${darkMode ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-white border-slate-205 text-slate-705"}`}
                     />
                   </div>
                   <div>
-                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Phone</label>
+                    <label className="block text-[9px] text-slate-400 uppercase font-mono tracking-wider mb-0.5">WhatsApp Sender Number</label>
                     <input
                       type="text"
-                      required
-                      value={simPhone}
-                      onChange={(e) => setSimPhone(e.target.value)}
-                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
-                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                      placeholder="e.g. whatsapp:+14155238886"
+                      className={`w-full px-2.5 py-1 text-xs rounded border focus:outline-none font-mono
+                        ${darkMode ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-white border-slate-205 text-slate-705"}`}
                     />
                   </div>
                 </div>
+              )}
 
-                <div className="grid grid-cols-2 gap-2 text-[10px]">
-                  <div>
-                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Budget Preference</label>
-                    <input
-                      type="text"
-                      required
-                      value={simBudget}
-                      onChange={(e) => setSimBudget(e.target.value)}
-                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono
-                        ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Contact Email</label>
-                    <input
-                      type="email"
-                      required
-                      value={simEmail}
-                      onChange={(e) => setSimEmail(e.target.value)}
-                      className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
-                        ${darkMode ? "bg-slate-900 border-slate-800 text-white animate-pulse" : "bg-white border-slate-200 text-slate-900"}`}
-                    />
-                  </div>
-                </div>
-
-                <div className="text-[10px]">
-                  <label className="block text-[9px] text-slate-450 uppercase font-mono tracking-wider mb-0.5">Campaign Name / Project Preferences</label>
+              {waMode === "gcloud" && (
+                <div>
+                  <label className="block text-[9px] text-slate-400 uppercase font-mono tracking-wider mb-0.5">Google Chat Incoming Webhook URL</label>
                   <input
                     type="text"
-                    required
-                    value={simCampaign}
-                    onChange={(e) => setSimCampaign(e.target.value)}
-                    className={`w-full px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-indigo-500
-                      ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-900"}`}
+                    placeholder="e.g. https://chat.googleapis.com/v1/spaces/..."
+                    className={`w-full px-2.5 py-1 text-xs rounded border focus:outline-none font-mono
+                      ${darkMode ? "bg-slate-950 border-slate-800 text-slate-300" : "bg-white border-slate-205 text-slate-750"}`}
                   />
                 </div>
+              )}
 
-                {simulationResult && (
-                  <div className={`p-2 rounded text-[10px] font-mono border leading-relaxed
-                    ${simulationResult.type === "success" 
-                      ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
-                      : "bg-rose-500/10 border-rose-500/20 text-rose-500"}`}
+              <div className="pt-2 text-[10px] font-mono space-y-1 text-slate-400 border-t border-slate-150/10 dark:border-slate-800/40">
+                <div className="flex justify-between">
+                  <span>Custom Phone Fields Loaded:</span>
+                  <span className="text-emerald-400 font-semibold">Active & Live</span>
+                </div>
+                <div className="flex justify-between items-center pr-1 mt-1">
+                  <span>Instant Modal Dispatch Trigger</span>
+                  <button
+                    type="button"
+                    onClick={() => setWaAutoNotify(prev => !prev)}
+                    className={`relative inline-flex h-3.5 w-6 shrink-0 cursor-pointer rounded-full border border-transparent transition-colors duration-200 ease-in-out focus:outline-none
+                      ${waAutoNotify ? "bg-emerald-600" : "bg-slate-700"}`}
                   >
-                    {simulationResult.message}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={isSimulatingLead}
-                  className="w-full py-1 text-xs font-semibold rounded bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white transition flex items-center justify-center gap-1 disabled:opacity-55"
-                >
-                  <Sparkles size={11} className={isSimulatingLead ? "animate-spin" : ""} />
-                  {isSimulatingLead ? "Firing Webhook..." : "Deploy Webhook Simulation"}
-                </button>
-              </form>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setShowSimulator(prev => !prev)}
-              className={`w-full py-1.5 text-xs font-semibold rounded-lg border transition cursor-pointer select-none active:scale-95 flex items-center justify-center gap-1.5
-                ${showSimulator 
-                  ? "bg-rose-500/5 border-rose-500/10 text-rose-455 hover:bg-rose-500/10" 
-                  : "bg-indigo-500/5 border-indigo-500/10 text-indigo-400 hover:bg-indigo-500/10"}`}
-            >
-              <Settings size={12} />
-              {showSimulator ? "Close Form Simulator" : "Live Webhook Test Simulator"}
-            </button>
+                    <span
+                      className={`pointer-events-none inline-block h-2.5 w-2.5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out
+                        ${waAutoNotify ? "translate-x-2.5" : "translate-x-0"}`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1531,6 +1763,93 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
           </div>
         </div>
 
+      </div>
+
+      {/* CARD 4: DISASTER RECOVERY & SYSTEM PORTFOLIO RECONSTRUCTION */}
+      <div className={`p-6 rounded-2xl border transition-all space-y-6 ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-100 shadow-sm"}`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-150/10 dark:border-slate-800/40 pb-4">
+          <div className="flex items-start gap-3 text-left">
+            <div className="p-2.5 rounded-xl bg-rose-500/10 text-rose-450 shrink-0">
+              <Archive size={22} className="text-rose-450 stroke-[2]" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-display font-semibold text-sm font-bold tracking-tight">Disaster recovery & Lead Portfolios Reconstruction</h3>
+                <span className="px-2 py-0.5 rounded text-[9px] font-mono tracking-wider font-extrabold uppercase bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                  Master Cache Safeguard
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-0.5 text-left">
+                Accidentally wiped your browser local storage or synced with an empty cloud database? Easily reconstruct your lead sheets and logs instantly.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={checkServerCacheMeta}
+            disabled={isCheckingServerCache}
+            className="text-xs font-semibold py-1.5 px-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/20 hover:bg-slate-100 dark:hover:bg-slate-900 text-slate-300 transition cursor-pointer flex items-center gap-1"
+          >
+            <RefreshCw size={11} className={isCheckingServerCache ? "animate-spin" : ""} />
+            Scan Master Filesystem
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center">
+          {/* Column 1: Informational Text */}
+          <div className="md:col-span-8 text-left space-y-3">
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Our servers run a dual-tier protection cache that securely backs up all lead sheets on the server-side filesystem (<code className="font-mono bg-slate-950 text-slate-350 px-1 py-0.5 rounded">crm_data_cache.json</code>) during active modifications. 
+            </p>
+            <div className="flex flex-wrap gap-4 pt-1">
+              <div className="p-3 rounded-xl bg-slate-950/25 border border-slate-850 dark:border-slate-805/40 flex flex-col justify-center min-w-[130px]">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-slate-500 text-left">Master Server Leads</span>
+                <span className="text-lg font-display font-bold text-teal-400 mt-0.5 text-left">
+                  {serverCacheLeadsCount !== null ? `${serverCacheLeadsCount} Leads` : "Analyzing..."}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/25 border border-slate-850 dark:border-slate-805/40 flex flex-col justify-center min-w-[130px]">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-slate-500 text-left">Master Server Agenda</span>
+                <span className="text-lg font-display font-bold text-cyan-400 mt-0.5 text-left">
+                  {serverCacheAppsCount !== null ? `${serverCacheAppsCount} Slots` : "Analyzing..."}
+                </span>
+              </div>
+              <div className="p-3 rounded-xl bg-slate-950/25 border border-slate-850 dark:border-slate-805/40 flex flex-col justify-center min-w-[130px]">
+                <span className="text-[10px] uppercase font-mono tracking-wider text-slate-500 text-left">Active Client Browser</span>
+                <span className="text-lg font-display font-bold text-slate-350 mt-0.5 text-left">
+                  {leads.length} Leads
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Column 2: Trigger Button */}
+          <div className="md:col-span-4 flex flex-col gap-2.5">
+            <button
+              type="button"
+              onClick={triggerServerCacheRecovery}
+              disabled={isRecovering}
+              className="w-full flex items-center justify-center gap-2 py-3.5 px-4 rounded-xl bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-550 hover:to-amber-550 text-white font-semibold text-xs tracking-wider uppercase shadow-md shadow-rose-500/10 cursor-pointer active:scale-95 transition select-none disabled:opacity-50"
+            >
+              <Archive size={13} className={isRecovering ? "animate-spin" : ""} />
+              {isRecovering ? "Reconstructing..." : "Execute Master Portfolios Reconstruction"}
+            </button>
+            <div className="p-2 rounded bg-rose-500/5 text-[9px] font-mono text-rose-455 border border-rose-500/10 text-center select-none">
+              ⚡ Overwrites active browser memory & local storage safely.
+            </div>
+          </div>
+        </div>
+
+        {recoveryFeedback && (
+          <div className={`p-4 rounded-xl text-xs font-semibold flex items-start gap-2 animate-fadeIn border
+            ${recoveryFeedback.type === "success" 
+              ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400" 
+              : "bg-rose-500/10 border-rose-500/25 text-rose-455"}`}
+          >
+            {recoveryFeedback.type === "success" ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertTriangle size={16} className="mt-0.5 shrink-0" />}
+            <div className="text-left">{recoveryFeedback.message}</div>
+          </div>
+        )}
       </div>
 
       {/* SQL Setup schema generation block */}

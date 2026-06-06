@@ -23,6 +23,7 @@ import {
   Calendar,
   AlertCircle,
   ChevronDown,
+  Clock,
   Lock,
   History,
   UserCheck,
@@ -58,6 +59,59 @@ export default function LeadPipeline({
   currentUser,
   leadEditLogs = []
 }: LeadPipelineProps) {
+  const isSalesOrTL = currentUser?.role === "sales_team" || currentUser?.role === "team_leader";
+
+  const allowedNormalizeSet = new Set([
+     "rickymatharu",
+     "prabhjotsingh",
+     "shammyverma",
+     "sanjeevmehta",
+     "haarishkhan",
+     "vinaygrewal",
+     "vishallaller",
+     "yuvanshkapoor",
+     "pardeepsharma",
+     "chiragmehta",
+     "pawantanwar",
+     "deepanshugarg",
+     "ankitghudayia",
+     "devverma",
+     "kunalwadhwa",
+     "kaushalmidha",
+     "argho",
+     "jeevakraina",
+     "sahilarora",
+     "pratibhapawa"
+  ]);
+
+  const getNormalizedParts = (nameStr: string) => {
+    if (!nameStr) return [];
+    return nameStr.toLowerCase().replace(/\s+/g, '').split('/');
+  };
+
+  const isNameInAllowedList = (nameStr: string) => {
+    if (!nameStr) return false;
+    const parts = getNormalizedParts(nameStr);
+    const inPreset = parts.some(part => allowedNormalizeSet.has(part));
+    if (inPreset) return true;
+    return (users || []).some(u => {
+      if (u.role !== "sales_team" && u.role !== "team_leader") return false;
+      const uParts = getNormalizedParts(u.name);
+      return parts.some(p => uParts.includes(p)) || uParts.some(p => parts.includes(p));
+    });
+  };
+
+  const isAgentEligibleForTransfer = (agentName: string) => {
+    if (!agentName) return false;
+    if (!isNameInAllowedList(agentName)) return false;
+    const matchedUser = (users || []).find(u => {
+      const uParts = getNormalizedParts(u.name);
+      const agentParts = getNormalizedParts(agentName);
+      return uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
+    });
+    return matchedUser ? (matchedUser.role === "team_leader" || matchedUser.role === "sales_team") : false;
+  };
+
   // Find duplicate phone numbers of leads across any sources
   const isDuplicatePhone = (phoneStr: string, ignoreId?: string) => {
     const val = (phoneStr || "").trim();
@@ -83,14 +137,44 @@ export default function LeadPipeline({
     return count > 0;
   };
 
+  // Generate dynamic WhatsApp link for triggering direct message assignment alerts
+  const getAgentWhatsAppHref = (agentName: string, lead: Lead) => {
+    if (!users) return null;
+    const foundUser = users.find(u => u.name.toLowerCase() === agentName.toLowerCase());
+    if (!foundUser || !foundUser.phone) return null;
+    
+    // Create clean WhatsApp Message template
+    const text = `*ELITE PRO INFRA ADVISORY ALERT*\n\n` +
+      `Hello *${foundUser.name}*,\n` +
+      `You have been assigned a new Client Lead!\n\n` +
+      `🔹 *Client:* ${lead.name || "N/A"}\n` +
+      `🔹 *Project:* ${lead.projectName || "N/A"}\n` +
+      `🔹 *Budget Plan:* ${lead.budget || "N/A"}\n` +
+      `🔹 *Location:* ${lead.location || "N/A"}\n` +
+      `🔹 *Reference Source:* ${lead.source || "N/A"}\n` +
+      `💬 *Client Notes:* ${lead.notes || "No extra notes."}\n\n` +
+      `Please contact the lead immediately. High conversion priority.`;
+    
+    // Sanitize phone number (remove +, spaces, hyphens)
+    const sanitizedPhone = foundUser.phone.replace(/[+\s-]/g, "");
+    return `https://wa.me/${sanitizedPhone}?text=${encodeURIComponent(text)}`;
+  };
+
   // Filter States
   const [searchTerm, setSearchTerm] = useState("");
+  const [, setTicker] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTicker(prev => prev + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [temperatureFilter, setTemperatureFilter] = useState<string>("all");
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [showLogs, setShowLogs] = useState(false);
+  const [showTransferLogs, setShowTransferLogs] = useState(false);
+  const [copiedTransfers, setCopiedTransfers] = useState(false);
 
   // Expanded dynamic filters (Project, Location, Budget, TL / Advisor wise)
   const [leadProjectFilter, setLeadProjectFilter] = useState<string>("all");
@@ -348,13 +432,13 @@ export default function LeadPipeline({
           const rawPhone = phoneIdx !== -1 && row[phoneIdx] !== undefined ? String(row[phoneIdx]).trim() : "";
           const rawSourceStr = sourceIdx !== -1 && row[sourceIdx] !== undefined ? String(row[sourceIdx]).trim() : "Website";
           const rawLoc = locationIdx !== -1 && row[locationIdx] !== undefined ? String(row[locationIdx]).trim() : "Noida, India";
-          const rawStatusStr = statusIdx !== -1 && row[statusIdx] !== undefined ? String(row[statusIdx]).trim() : "Interested";
+          const rawStatusStr = statusIdx !== -1 && row[statusIdx] !== undefined ? String(row[statusIdx]).trim() : "New Lead";
           const rawPriorityStr = priorityIdx !== -1 && row[priorityIdx] !== undefined ? String(row[priorityIdx]).trim() : "Warm";
           let rawBudget = budgetIdx !== -1 && row[budgetIdx] !== undefined ? String(row[budgetIdx]).trim() : "₹1.0 Cr";
           // Sanitize corrupted UTF-8 sequences for Hindi Rupee symbol (₹)
           rawBudget = rawBudget
             .replace(/â\u0082¹/g, "₹")
-            .replace(/â¹/g, "₹")
+            .replace(/â‚¹/g, "₹")
             .replace(/â\u0082/g, "₹")
             .replace(/â\u0092¹/g, "₹")
             .replace(/â\u0092/g, "₹");
@@ -367,8 +451,8 @@ export default function LeadPipeline({
           if (matchedSource) finalSource = matchedSource;
 
           // Match Status safely
-          const validStatuses = ['Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate'];
-          let finalStatus: any = "Interested";
+          const validStatuses = ['New Lead', 'Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate', 'Not Pick'];
+          let finalStatus: any = "New Lead";
           const matchedStatus = validStatuses.find(s => s.toLowerCase() === rawStatusStr.toLowerCase() || s.toLowerCase().replace(/\s+/g, "") === rawStatusStr.toLowerCase().replace(/\s+/g, ""));
           if (matchedStatus) finalStatus = matchedStatus;
 
@@ -492,6 +576,14 @@ export default function LeadPipeline({
   const [emailNotes, setEmailNotes] = useState("");
   const [emailSuccessMsg, setEmailSuccessMsg] = useState("");
 
+  // Validation error state for Add/Edit Lead Forms
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // Clear form errors whenever modals transition
+  useEffect(() => {
+    setFormError(null);
+  }, [isAddModalOpen, editingLead]);
+
   // New Lead form state
   const [newLeadForm, setNewLeadForm] = useState(() => ({
     name: "",
@@ -499,7 +591,7 @@ export default function LeadPipeline({
     position: "",
     email: "",
     phone: "",
-    status: "" as any,
+    status: "New Lead" as any,
     source: "Website" as Lead["source"],
     temperature: "" as any,
     budget: "",
@@ -686,13 +778,21 @@ export default function LeadPipeline({
   // Handle addition
   const handleAddNewLead = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newLeadForm.name) return;
+    const finalName = newLeadForm.name.trim();
+    const finalPhone = newLeadForm.phone.trim();
+    if (!finalName && !finalPhone) {
+      setFormError("Minimum identifying criteria required: Please provide either a Customer Name or a Phone Number to register the lead.");
+      return;
+    }
+    setFormError(null);
     onAddLead({
       ...newLeadForm,
-      status: newLeadForm.status || "Interested",
-      temperature: newLeadForm.temperature || "Warm",
-      location: newLeadForm.location || "Noida, India",
-      budget: newLeadForm.budget || "₹15.0 Cr",
+      name: finalName || `Lead (${finalPhone})`,
+      phone: finalPhone,
+      status: newLeadForm.status || "",
+      temperature: newLeadForm.temperature || "",
+      location: newLeadForm.location || "",
+      budget: newLeadForm.budget || "",
       lastCommunication: new Date().toISOString().split("T")[0]
     });
     // Reset
@@ -702,7 +802,7 @@ export default function LeadPipeline({
       position: "",
       email: "",
       phone: "",
-      status: "" as any,
+      status: "New Lead" as any,
       source: "Website",
       temperature: "" as any,
       budget: "",
@@ -719,8 +819,21 @@ export default function LeadPipeline({
   const handleEditSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingLead) return;
+    const finalName = editingLead.name.trim();
+    const finalPhone = editingLead.phone.trim();
+    if (!finalName && !finalPhone) {
+      setFormError("Minimum identifying criteria required: Please provide either a Customer Name or a Phone Number to save.");
+      return;
+    }
+    setFormError(null);
     onUpdateLead({
       ...editingLead,
+      name: finalName || `Lead (${finalPhone})`,
+      phone: finalPhone,
+      status: editingLead.status || "",
+      temperature: editingLead.temperature || "",
+      location: editingLead.location || "",
+      budget: editingLead.budget || "",
       dateUpdated: new Date().toISOString().split("T")[0]
     });
     setEditingLead(null);
@@ -806,6 +919,8 @@ export default function LeadPipeline({
   // Helper colors for Lead status badges
   const getStatusBadgeClass = (status: Lead["status"]) => {
     switch (status) {
+      case "New Lead":
+        return "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20";
       case "Interested":
         return "bg-teal-500/10 text-teal-400 border border-teal-500/20";
       case "Follow Up":
@@ -824,6 +939,8 @@ export default function LeadPipeline({
         return "bg-slate-500/10 text-slate-400 border border-slate-500/20";
       case "Duplicate":
         return "bg-pink-500/10 text-pink-400 border border-pink-500/20";
+      case "Not Pick":
+        return "bg-amber-600/10 text-amber-500 border border-amber-500/20";
       default:
         return "bg-slate-500/10 text-slate-400 border border-slate-500/20";
     }
@@ -893,7 +1010,10 @@ export default function LeadPipeline({
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               id="toggle-edit-logs-btn"
-              onClick={() => setShowLogs(!showLogs)}
+              onClick={() => {
+                setShowLogs(!showLogs);
+                setShowTransferLogs(false);
+              }}
               className={`px-4.5 py-2.5 rounded-xl border text-xs font-semibold tracking-wide uppercase transition-all duration-155 flex items-center gap-2 cursor-pointer active:scale-95
                 ${showLogs 
                   ? "bg-amber-550 border-amber-550 text-white shadow-md shadow-amber-500/15 hover:bg-amber-500" 
@@ -913,6 +1033,37 @@ export default function LeadPipeline({
             </button>
 
             {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") && (
+              <button
+                id="toggle-transfer-history-btn"
+                onClick={() => {
+                  setShowTransferLogs(!showTransferLogs);
+                  setShowLogs(false);
+                }}
+                className={`px-4.5 py-2.5 rounded-xl border text-xs font-semibold tracking-wide uppercase transition-all duration-155 flex items-center gap-2 cursor-pointer active:scale-95
+                  ${showTransferLogs 
+                    ? "bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-500/15 hover:bg-rose-550" 
+                    : darkMode 
+                      ? "bg-slate-800 border-slate-700 hover:bg-slate-700 text-slate-300" 
+                      : "bg-slate-50 border-slate-205 hover:bg-slate-100 hover:border-slate-300 text-slate-600"}`}
+                title="Super Admin and Admin can see Lead Auto-Transfer Histories"
+              >
+                <Clock size={14} className={showTransferLogs ? "animate-bounce" : ""} />
+                <span>{showTransferLogs ? "Hide Transfer Histories" : "Show Lead Auto-Transfer Logs"}</span>
+                {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").length > 0 && (
+                  <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-mono leading-none font-bold
+                    ${showTransferLogs ? "bg-rose-700/50 text-white" : "bg-rose-500/15 text-rose-400 border border-rose-500/10"}`}>
+                    {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").length}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {currentUser && (
+              currentUser.role === "super_admin" || 
+              currentUser.role === "admin" || 
+              currentUser.role === "team_leader" || 
+              currentUser.role === "sales_team"
+            ) && (
               <>
                 <button
                   id="register-lead-btn"
@@ -968,6 +1119,7 @@ export default function LeadPipeline({
                   : "bg-slate-50 border-slate-150 text-slate-800 focus:border-teal-600 font-medium"}`}
             >
               <option value="all">💼 All Lead Statuses</option>
+              <option value="New Lead">New Lead</option>
               <option value="Interested">Interested</option>
               <option value="Follow Up">Follow Up</option>
               <option value="Detailed Share">Detailed Share</option>
@@ -977,6 +1129,7 @@ export default function LeadPipeline({
               <option value="Call Back">Call Back</option>
               <option value="Junk">Junk</option>
               <option value="Duplicate">Duplicate</option>
+              <option value="Not Pick">Not Pick</option>
             </select>
           </div>
 
@@ -1479,6 +1632,144 @@ export default function LeadPipeline({
             </div>
           )}
         </div>
+      ) : showTransferLogs && (currentUser?.role === "super_admin" || currentUser?.role === "admin") ? (
+        <div 
+          id="lead-transfer-history-panel" 
+          className={`p-6 rounded-2xl border transition-all space-y-6 ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-150 shadow-sm"}`}
+        >
+          <div className="flex justify-between items-center pb-4 border-b border-slate-100/10">
+            <div>
+              <h3 className={`font-display font-semibold text-base ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                Lead Inactivity Auto-Transfer History Ledger
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5 font-sans">
+                Real-time security auditing trail of auto-generated reassignments due to 30-minute inactivity rules
+              </p>
+            </div>
+            <span className="px-2.5 py-1 text-xs font-mono font-bold uppercase rounded-lg bg-rose-500/15 text-rose-500 border border-rose-500/25">
+              Secure System Logs
+            </span>
+          </div>
+
+          {/* Consolidated Copyable Text Area Console */}
+          {(() => {
+            const transferLogs = leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent");
+            const compiledText = transferLogs.map((log, idx) => {
+              const routeChange = log.changes.find(c => c.field === "assignedAgent");
+              const oldVal = routeChange?.oldValue || "Unassigned";
+              const newVal = routeChange?.newValue || "Unassigned";
+              return `[${log.timestamp}] Lead: "${log.leadName}" | Transferred Agent: ${oldVal} -> ${newVal}`;
+            }).join("\n");
+            
+            const handleCopy = () => {
+              if (!compiledText) return;
+              navigator.clipboard.writeText(compiledText);
+              setCopiedTransfers(true);
+              setTimeout(() => setCopiedTransfers(false), 2050);
+            };
+            
+            return (
+              <div className={`p-4.5 rounded-xl border ${darkMode ? "bg-slate-950 border-slate-800" : "bg-slate-50 border-slate-205"}`}>
+                <div className="flex justify-between items-center mb-2.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full bg-rose-500 ${compiledText ? "animate-pulse" : ""}`} />
+                    <span className="text-[10px] font-bold font-mono uppercase tracking-wider text-slate-400">
+                      Consolidated Transfer History Text Box (System Console)
+                    </span>
+                  </div>
+                  {compiledText && (
+                    <button
+                      type="button"
+                      onClick={handleCopy}
+                      className={`px-3 py-1 rounded text-[10px] font-bold uppercase cursor-pointer flex items-center gap-1 transition active:scale-95
+                        ${copiedTransfers 
+                          ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                          : "bg-slate-700/80 hover:bg-slate-750 text-slate-200 border border-slate-650"}`}
+                    >
+                      {copiedTransfers ? (
+                        <>
+                          <Check size={11} className="text-emerald-400 animate-pulse" />
+                          Copied Console!
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={11} />
+                          Copy Entire History
+                        </>
+                      )}
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  id="lead-transfer-text-console"
+                  readOnly
+                  value={compiledText}
+                  rows={5}
+                  placeholder="Console pipeline clear. No inactive auto-transfers captured yet."
+                  className={`w-full p-3 font-mono text-[10px] leading-relaxed rounded-lg border focus:ring-1 focus:ring-rose-505/30 outline-none
+                    ${darkMode ? "bg-slate-900 border-slate-800 text-slate-300" : "bg-white border-slate-200 text-slate-700 shadow-inner"}`}
+                />
+              </div>
+            );
+          })()}
+
+          {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").length > 0 ? (
+            <div className="space-y-4">
+              {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").map((log) => (
+                <div 
+                  key={log.id} 
+                  className={`p-4 rounded-xl border font-sans text-xs transition duration-155
+                    ${darkMode ? "bg-slate-950/60 border-slate-850 hover:border-slate-800" : "bg-slate-50/60 border-slate-205 hover:border-slate-300 shadow-sm"}`}
+                >
+                  {/* Log Header */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100/10 mb-3 text-slate-400">
+                    <div className="flex items-center gap-2">
+                       <div className="p-1 px-2 rounded bg-rose-500/10 text-rose-400 font-bold font-mono text-[9px] uppercase border border-rose-500/20 flex items-center gap-1">
+                        <Clock size={10} />
+                        <span>Auto-Reassigned</span>
+                      </div>
+                      <span className={`font-semibold ${darkMode ? "text-white" : "text-slate-800"}`}>
+                        Lead: <strong className="text-teal-500">{log.leadName}</strong>
+                      </span>
+                    </div>
+                    
+                    <div className="flex items-center gap-2.5 text-[10px] font-mono">
+                      <span>Authority: <strong className="text-rose-455">System Agent</strong></span>
+                      <span className="text-slate-500">•</span>
+                      <span className="text-slate-400 font-mono text-[10px]">{log.timestamp}</span>
+                    </div>
+                  </div>
+
+                  {/* Changes List */}
+                  <div className="space-y-2">
+                    {log.changes.map((change, idx) => (
+                      <div key={idx} className="flex flex-col sm:flex-row sm:items-start justify-between gap-1.5 pl-3 py-1 border-l-2 border-rose-500">
+                        <span className="font-mono text-[10px] text-slate-400 font-semibold uppercase min-w-[200px]">
+                          {formatFieldName(change.field)}:
+                        </span>
+                        
+                        <div className="flex-1 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="text-slate-450 line-through truncate max-w-[220px]" title={change.oldValue}>
+                            {change.oldValue || <span className="italic text-slate-500">None</span>}
+                          </span>
+                          <span className="text-slate-405 font-bold font-mono">→</span>
+                          <span className="text-teal-450 font-bold bg-teal-500/10 border border-teal-500/20 px-2 py-0.5 rounded max-w-[320px] truncate" title={change.newValue}>
+                            {change.newValue || <span className="italic text-teal-600">None</span>}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="py-12 text-center text-slate-400">
+              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 30 minutes.
+            </div>
+          )}
+        </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {filteredLeads.length > 0 ? (
@@ -1513,6 +1804,22 @@ export default function LeadPipeline({
                       <span>{lead.position || "Private Client"}</span>
                       <span className="text-slate-500 font-light">|</span>
                       <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
+                      {(() => {
+                        const waHref = getAgentWhatsAppHref(lead.assignedAgent, lead);
+                        if (!waHref) return null;
+                        return (
+                          <a 
+                            href={waHref}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title={`Instant Direct Message / WhatsApp Alert to ${lead.assignedAgent}`}
+                            className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                            💬 Notify WA
+                          </a>
+                        );
+                      })()}
                       {isDuplicatePhone(lead.phone, lead.id) && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-450 border border-rose-500/20 text-[9px] font-medium font-sans animate-pulse">
                           <AlertCircle size={10} />
@@ -1524,8 +1831,20 @@ export default function LeadPipeline({
 
                   <div className="flex flex-col items-end gap-1.5">
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono tracking-wider uppercase font-semibold ${getStatusBadgeClass(lead.status)}`}>
-                      {lead.status}
+                      {lead.status || "(Select Status)"}
                     </span>
+                    {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && (
+                      <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
+                        <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
+                        {(() => {
+                          const elapsed = Date.now() - (lead.lastActionTimestamp || lead.assignmentTimestamp || 0);
+                          const remaining = Math.max(0, 30 * 60 * 1000 - elapsed);
+                          const minutes = Math.floor(remaining / 60000);
+                          const seconds = Math.floor((remaining % 60000) / 1000);
+                          return `Transfer in ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+                        })()}
+                      </span>
+                    )}
                     <div className="text-[10px] font-mono font-medium">
                       Priority Index: <span className={getScoreColor(lead.score || 50)}>{lead.score || 50}</span>
                     </div>
@@ -1563,7 +1882,7 @@ export default function LeadPipeline({
                     <div>
                       <p className="text-[10px] text-slate-400 leading-none">LEAD PRIORITY</p>
                       <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold mt-0.5 ${getTemperatureBadgeClass(lead.temperature)}`}>
-                        {lead.temperature}
+                        {lead.temperature || "(Select Priority)"}
                       </span>
                     </div>
                   </div>
@@ -1824,13 +2143,21 @@ export default function LeadPipeline({
 
             <h3 className="font-display font-bold text-lg border-b border-slate-100/10 pb-3 mb-4">Register Capital Investor Lead</h3>
 
+            {formError && (
+              <div id="form-validation-error-add" className="mb-4 p-3 rounded-xl border border-rose-500/25 bg-rose-500/10 text-rose-400 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+                <AlertCircle size={14} className="shrink-0 text-rose-500" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleAddNewLead} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Customer Name *</label>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
+                    Customer Name <span className="text-teal-400 text-[9px] font-sans font-normal">(Compulsory if no Phone)</span>
+                  </label>
                   <input
                     id="new-lead-name"
-                    required
                     type="text"
                     placeholder="Enter customer name"
                     value={newLeadForm.name}
@@ -1869,7 +2196,9 @@ export default function LeadPipeline({
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Phone Number</label>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
+                    Phone Number <span className="text-teal-400 text-[9px] font-sans font-normal">(Compulsory if no Name)</span>
+                  </label>
                   <input
                     id="new-lead-phone"
                     type="text"
@@ -1915,9 +2244,8 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Physical Location</label>
                   <input
                     id="new-lead-location"
-                    required
                     type="text"
-                    placeholder="e.g. Noida Sector 62, India"
+                    placeholder="e.g. Noida Sector 62, India (Optional)"
                     value={newLeadForm.location}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, location: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
@@ -1931,13 +2259,13 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Status</label>
                   <select
                     id="new-lead-status"
-                    required
                     value={newLeadForm.status}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, status: e.target.value as Lead["status"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
                   >
-                    <option value="">-- Select Status --</option>
+                    <option value="">(Select Status)</option>
+                    <option value="New Lead">New Lead</option>
                     <option value="Interested">Interested</option>
                     <option value="Follow Up">Follow Up</option>
                     <option value="Detailed Share">Detailed Share</option>
@@ -1947,6 +2275,7 @@ export default function LeadPipeline({
                     <option value="Call Back">Call Back</option>
                     <option value="Junk">Junk</option>
                     <option value="Duplicate">Duplicate</option>
+                    <option value="Not Pick">Not Pick</option>
                   </select>
                 </div>
 
@@ -1954,13 +2283,12 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Priority</label>
                   <select
                     id="new-lead-temperature"
-                    required
                     value={newLeadForm.temperature}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, temperature: e.target.value as Lead["temperature"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
                   >
-                    <option value="">-- Select Priority --</option>
+                    <option value="">(Select Priority)</option>
                     <option value="Hot">🔥 Hot</option>
                     <option value="Warm">☀️ Warm</option>
                     <option value="Cold">❄️ Cold</option>
@@ -1974,9 +2302,8 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Budget</label>
                   <input
                     id="new-lead-budget"
-                    required
                     type="text"
-                    placeholder="e.g. ₹15.0 Cr"
+                    placeholder="e.g. ₹15.0 Cr (Optional)"
                     value={newLeadForm.budget}
                     onChange={(e) => setNewLeadForm({ ...newLeadForm, budget: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
@@ -2045,18 +2372,18 @@ export default function LeadPipeline({
                 )}
               </div>
 
-              <div>
-                <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Notes (Consultation Synopsis Brief)</label>
-                <textarea
-                  id="new-lead-notes"
-                  rows={3}
-                  value={newLeadForm.notes}
-                  onChange={(e) => setNewLeadForm({ ...newLeadForm, notes: e.target.value })}
-                  placeholder="Record essential client demands and notes here..."
-                  className={`w-full px-3 py-2 text-xs rounded-lg border 
-                    ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
-                />
-              </div>
+               <div>
+                 <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Notes (Consultation Synopsis Brief)</label>
+                 <textarea
+                   id="new-lead-notes"
+                   rows={3}
+                   value={newLeadForm.notes}
+                   onChange={(e) => setNewLeadForm({ ...newLeadForm, notes: e.target.value })}
+                   placeholder="Record essential client demands and notes here..."
+                   className={`w-full px-3 py-2 text-xs rounded-lg border 
+                     ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                 />
+               </div>
 
               <div className="flex gap-2.5 justify-end pt-3 border-t border-slate-100/10">
                 <button
@@ -2096,13 +2423,21 @@ export default function LeadPipeline({
 
             <h3 className="font-display font-bold text-lg border-b border-slate-100/10 pb-3 mb-4">Edit Capital Real Estate Parameters</h3>
 
+            {formError && (
+              <div id="form-validation-error-edit" className="mb-4 p-3 rounded-xl border border-rose-500/25 bg-rose-500/10 text-rose-400 text-xs font-semibold flex items-center gap-2 animate-fadeIn">
+                <AlertCircle size={14} className="shrink-0 text-rose-500" />
+                <span>{formError}</span>
+              </div>
+            )}
+
             <form onSubmit={handleEditSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Customer Name *</label>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
+                    Customer Name <span className="text-teal-400 text-[9px] font-sans font-normal">(Compulsory if no Phone)</span>
+                  </label>
                   <input
                     id="edit-lead-name"
-                    required
                     type="text"
                     value={editingLead.name}
                     onChange={(e) => setEditingLead({ ...editingLead, name: e.target.value })}
@@ -2165,7 +2500,9 @@ export default function LeadPipeline({
                 </div>
 
                 <div>
-                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Phone Number</label>
+                  <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">
+                    Phone Number <span className="text-teal-400 text-[9px] font-sans font-normal">(Compulsory if no Name)</span>
+                  </label>
                   <input
                     id="edit-lead-phone"
                     type="text"
@@ -2210,9 +2547,8 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Physical Location</label>
                   <input
                     id="edit-lead-location"
-                    required
                     type="text"
-                    placeholder="e.g. Noida Sector 62, India"
+                    placeholder="e.g. Noida Sector 62, India (Optional)"
                     value={editingLead.location}
                     onChange={(e) => setEditingLead({ ...editingLead, location: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
@@ -2226,13 +2562,13 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Status</label>
                   <select
                     id="edit-lead-status"
-                    required
                     value={editingLead.status}
                     onChange={(e) => setEditingLead({ ...editingLead, status: e.target.value as Lead["status"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200 font-medium"}`}
                   >
-                    <option value="">-- Select Status --</option>
+                    <option value="">(Select Status)</option>
+                    <option value="New Lead">New Lead</option>
                     <option value="Interested">Interested</option>
                     <option value="Follow Up">Follow Up</option>
                     <option value="Detailed Share">Detailed Share</option>
@@ -2242,6 +2578,7 @@ export default function LeadPipeline({
                     <option value="Call Back">Call Back</option>
                     <option value="Junk">Junk</option>
                     <option value="Duplicate">Duplicate</option>
+                    <option value="Not Pick">Not Pick</option>
                   </select>
                 </div>
 
@@ -2249,13 +2586,12 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Priority</label>
                   <select
                     id="edit-lead-temperature"
-                    required
                     value={editingLead.temperature}
                     onChange={(e) => setEditingLead({ ...editingLead, temperature: e.target.value as Lead["temperature"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
                   >
-                    <option value="">-- Select Priority --</option>
+                    <option value="">(Select Priority)</option>
                     <option value="Hot">🔥 Hot</option>
                     <option value="Warm">☀️ Warm</option>
                     <option value="Cold">❄️ Cold</option>
@@ -2324,17 +2660,17 @@ export default function LeadPipeline({
                 )}
               </div>
 
-              <div>
-                <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Notes (Consultation Synopsis Brief)</label>
-                <textarea
-                  id="edit-lead-notes"
-                  rows={3}
-                  value={editingLead.notes}
-                  onChange={(e) => setEditingLead({ ...editingLead, notes: e.target.value })}
-                  className={`w-full px-3 py-2 text-xs rounded-lg border 
-                    ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
-                />
-              </div>
+               <div>
+                 <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Notes (Consultation Synopsis Brief)</label>
+                 <textarea
+                   id="edit-lead-notes"
+                   rows={3}
+                   value={editingLead.notes}
+                   onChange={(e) => setEditingLead({ ...editingLead, notes: e.target.value })}
+                   className={`w-full px-3 py-2 text-xs rounded-lg border 
+                     ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
+                 />
+               </div>
 
               <div className="flex gap-2.5 justify-end pt-3 border-t border-slate-100/10">
                 <button
@@ -2502,7 +2838,7 @@ export default function LeadPipeline({
                           <td className="p-2 border-r border-slate-800/10 font-mono tracking-tight text-amber-500 font-semibold whitespace-nowrap">{formatBudgetSafely(lead.budget)}</td>
                           <td className="p-2 whitespace-nowrap">
                             <span className="px-1.5 py-0.2 rounded-md bg-teal-500/10 text-teal-400 border border-teal-500/20 text-[8px] font-mono tracking-wider font-semibold">
-                              {lead.status}
+                              {lead.status || "(Select Status)"}
                             </span>
                           </td>
                         </tr>

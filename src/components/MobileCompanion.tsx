@@ -290,13 +290,15 @@ export default function MobileCompanion({
                           onChange={(e) => setMobileStatus(e.target.value as Lead["status"])}
                           className="w-full bg-slate-950 border border-slate-800 text-slate-200 px-2 py-1.5 rounded text-[10px] focus:outline-none"
                         >
-                          <option value="Interested">🆕 Interested</option>
+                          <option value="New Lead">🆕 New Lead</option>
+                          <option value="Interested">👍 Interested</option>
                           <option value="Follow Up">📞 Follow Up</option>
                           <option value="Detailed Share">🤝 Detailed Share</option>
                           <option value="Meeting Done">🎉 Meeting Done</option>
                           <option value="Site Visit">🏗️ Site Visit</option>
                           <option value="Call Back">🔄 Call Back</option>
                           <option value="Not Interested">❌ Not Interested</option>
+                          <option value="Not Pick">🔇 Not Pick</option>
                         </select>
                       </div>
 

@@ -61,7 +61,7 @@ export default function StakeholderReports({
     : 24;
 
   const stageCounts = {
-    New: leads.filter(l => l.status === "Interested" || l.status === "Follow Up").length,
+    New: leads.filter(l => l.status === "New Lead" || l.status === "Interested" || l.status === "Follow Up").length,
     Contacted: leads.filter(l => l.status === "Call Back" || l.status === "Detailed Share").length,
     ConceptPlanning: leads.filter(l => l.status === "Detailed Share").length,
     Won: wonCount,

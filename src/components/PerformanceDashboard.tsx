@@ -187,7 +187,7 @@ export default function PerformanceDashboard({
 
   // Count leads by stage
   const stageCounts = {
-    new: currentFilteredLeads.filter(l => l.status === "Interested" || l.status === "Follow Up").length,
+    new: currentFilteredLeads.filter(l => l.status === "New Lead" || l.status === "Interested" || l.status === "Follow Up").length,
     contacted: currentFilteredLeads.filter(l => l.status === "Call Back" || l.status === "Detailed Share").length,
     negotiating: currentFilteredLeads.filter(l => l.status === "Detailed Share").length,
     won: currentFilteredLeads.filter(l => l.status === "Meeting Done" || l.status === "Site Visit").length,
@@ -915,7 +915,9 @@ export default function PerformanceDashboard({
                         {i + 1}
                       </div>
                       <div>
-                        <h4 className="text-xs font-semibold">{agent.name}</h4>
+                        <h4 className="text-xs font-semibold">
+                          {agent.name}
+                        </h4>
                         <p className="text-[10px] text-slate-400">
                           {agent.dealsWon} won of {agent.totalLeads} assigned (Active Scope)
                         </p>

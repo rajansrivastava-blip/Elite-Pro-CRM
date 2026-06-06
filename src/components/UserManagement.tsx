@@ -77,6 +77,7 @@ export default function UserManagement({
   const [newUserForm, setNewUserForm] = useState({
     name: "",
     email: "",
+    phone: "",
     role: "sales_team" as UserRole,
     department: "Infrastructure Advisory",
     avatarUrl: "",
@@ -159,6 +160,7 @@ export default function UserManagement({
     onAddUser({
       name: newUserForm.name,
       email: newUserForm.email,
+      phone: newUserForm.phone.trim() || undefined,
       role: isTL ? "sales_team" : newUserForm.role,
       department: newUserForm.department,
       avatarUrl: avatar,
@@ -170,6 +172,7 @@ export default function UserManagement({
     setNewUserForm({
       name: "",
       email: "",
+      phone: "",
       role: "sales_team",
       department: "Infrastructure Advisory",
       avatarUrl: "",
@@ -619,6 +622,19 @@ export default function UserManagement({
                   </div>
 
                   <div>
+                    <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">Mobile Phone / WhatsApp Number</label>
+                    <input
+                      id="reg-user-phone"
+                      type="text"
+                      placeholder="e.g. +919876543210 (include country code)"
+                      value={newUserForm.phone}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, phone: e.target.value })}
+                      className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500
+                        ${darkMode ? "bg-slate-950 border-slate-805 text-white" : "bg-slate-50 border-slate-200"}`}
+                    />
+                  </div>
+
+                  <div>
                     <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">Set Sign-in Password</label>
                     <input
                       id="reg-user-password"
@@ -853,6 +869,19 @@ export default function UserManagement({
                       required
                       value={editingUser.email}
                       onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+                      className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500
+                        ${darkMode ? "bg-slate-950 border-slate-805 text-white" : "bg-slate-50 border-slate-200"}`}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1.5">Mobile Phone / WhatsApp Number</label>
+                    <input
+                      id="edit-user-phone"
+                      type="text"
+                      placeholder="e.g. +919876543210 (include country code)"
+                      value={editingUser.phone || ""}
+                      onChange={(e) => setEditingUser({ ...editingUser, phone: e.target.value })}
                       className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500
                         ${darkMode ? "bg-slate-950 border-slate-805 text-white" : "bg-slate-50 border-slate-200"}`}
                     />

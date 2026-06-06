@@ -37,7 +37,12 @@ import {
   Lock,
   UserCheck,
   ShieldCheck,
-  AlertOctagon
+  AlertOctagon,
+  Check,
+  ExternalLink,
+  MessageSquare,
+  Send,
+  Share2
 } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -64,7 +69,19 @@ export default function App() {
   // Application State
   const [leads, setLeads] = useState<Lead[]>(() => {
     const saved = localStorage.getItem("elite_pro_leads");
-    return saved ? JSON.parse(saved) : INITIAL_LEADS;
+    const rawLeads = saved ? JSON.parse(saved) : INITIAL_LEADS;
+    // Walk through and scrub any auto-transferred text from the notes field so it is kept clean and pristine
+    return rawLeads.map((l: Lead) => {
+      if (l.notes && (l.notes.includes("[System Auto-Transfer]") || l.notes.includes("System Auto-Transfer"))) {
+        const cleanNotes = l.notes
+          .split("\n")
+          .filter((line: string) => !line.includes("[System Auto-Transfer]") && !line.includes("System Auto-Transfer"))
+          .join("\n")
+          .trim();
+        return { ...l, notes: cleanNotes };
+      }
+      return l;
+    });
   });
 
   const [appointments, setAppointments] = useState<Appointment[]>(() => {
@@ -165,7 +182,7 @@ export default function App() {
 
   // Hoisted Meta Ads configuration states
   const [metaVerifyToken, setMetaVerifyToken] = useState<string>(() => localStorage.getItem("meta_verify_token") || "elite_pro_meta_verify_token_2026");
-  const [metaAutoIngest, setMetaAutoIngest] = useState<boolean>(() => localStorage.getItem("meta_auto_ingest") !== "false");
+  const [metaAutoIngest, setMetaAutoIngest] = useState<boolean>(() => localStorage.getItem("meta_auto_ingest") === "true");
   const [lastMetaSynced, setLastMetaSynced] = useState<string>(() => localStorage.getItem("meta_last_synced_time") || "Never");
 
   const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
@@ -381,8 +398,10 @@ export default function App() {
 
     let success = res.errors.length === 0;
     if (success) {
-      if (res.leads) setLeads(res.leads);
-      if (res.users) {
+      if (res.leads && res.leads.length > 0) {
+        setLeads(res.leads);
+      }
+      if (res.users && res.users.length > 0) {
         setUsers(prev => {
           const merged = [...res.users!];
           prev.forEach(localUser => {
@@ -398,9 +417,15 @@ export default function App() {
           return merged;
         });
       }
-      if (res.appointments) setAppointments(res.appointments);
-      if (res.communicationLogs) setCommunicationLogs(res.communicationLogs);
-      if (res.leadEditLogs) setLeadEditLogs(res.leadEditLogs);
+      if (res.appointments && res.appointments.length > 0) {
+        setAppointments(res.appointments);
+      }
+      if (res.communicationLogs && res.communicationLogs.length > 0) {
+        setCommunicationLogs(res.communicationLogs);
+      }
+      if (res.leadEditLogs && res.leadEditLogs.length > 0) {
+        setLeadEditLogs(res.leadEditLogs);
+      }
 
       setSyncHistory(prev => [
         `${new Date().toISOString().replace("T", " ").substr(0, 19)} GMT - Pulled live data from Supabase backend tables.`,
@@ -417,6 +442,9 @@ export default function App() {
   // Is Mobile Companion Mode simulated activity check
   const [isMobileModeActive, setIsMobileModeActive] = useState<boolean>(false);
 
+  // Server state sync loading status
+  const [crmDataLoaded, setCrmDataLoaded] = useState<boolean>(false);
+
   // Custom modal config state
   const [modalConfig, setModalConfig] = useState<{
     isOpen: boolean;
@@ -430,6 +458,16 @@ export default function App() {
     message: "",
     type: "alert"
   });
+
+  // Automated notification dispatch pipeline state
+  const [activeAutoDispatch, setActiveAutoDispatch] = useState<{
+    isOpen: boolean;
+    leadName: string;
+    agentName: string;
+    phone: string;
+    message: string;
+    waHref: string;
+  } | null>(null);
 
   const triggerAlert = (title: string, message: string) => {
     setModalConfig({
@@ -453,19 +491,47 @@ export default function App() {
   // Persistence side effects
   useEffect(() => {
     localStorage.setItem("elite_pro_leads", JSON.stringify(leads));
-  }, [leads]);
+    if (crmDataLoaded) {
+      fetch("/api/crm/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
+      }).catch(err => console.error("Server cache sync error:", err));
+    }
+  }, [leads, crmDataLoaded]);
 
   useEffect(() => {
     localStorage.setItem("elite_pro_appointments", JSON.stringify(appointments));
-  }, [appointments]);
+    if (crmDataLoaded) {
+      fetch("/api/crm/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
+      }).catch(err => console.error("Server cache sync error:", err));
+    }
+  }, [appointments, crmDataLoaded]);
 
   useEffect(() => {
     localStorage.setItem("elite_pro_communication_logs", JSON.stringify(communicationLogs));
-  }, [communicationLogs]);
+    if (crmDataLoaded) {
+      fetch("/api/crm/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
+      }).catch(err => console.error("Server cache sync error:", err));
+    }
+  }, [communicationLogs, crmDataLoaded]);
 
   useEffect(() => {
     localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(leadEditLogs));
-  }, [leadEditLogs]);
+    if (crmDataLoaded) {
+      fetch("/api/crm/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
+      }).catch(err => console.error("Server cache sync error:", err));
+    }
+  }, [leadEditLogs, crmDataLoaded]);
 
   useEffect(() => {
     localStorage.setItem("elite_pro_notifications", JSON.stringify(notifications));
@@ -486,7 +552,67 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem("elite_pro_users", JSON.stringify(users));
-  }, [users]);
+    if (crmDataLoaded) {
+      fetch("/api/crm/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
+      }).catch(err => console.error("Server cache sync error:", err));
+    }
+  }, [users, crmDataLoaded]);
+
+  // Load initial CRM data cache from server on mount
+  useEffect(() => {
+    const fetchCrmData = async () => {
+      try {
+        const res = await fetch("/api/crm/data");
+        const data = await res.json();
+        if (data && data.leads && data.leads.length > 0) {
+          setLeads(data.leads);
+          if (data.users && data.users.length > 0) setUsers(data.users);
+          if (data.appointments) setAppointments(data.appointments);
+          if (data.communicationLogs) setCommunicationLogs(data.communicationLogs);
+          if (data.leadEditLogs) setLeadEditLogs(data.leadEditLogs);
+          
+          localStorage.setItem("elite_pro_leads", JSON.stringify(data.leads));
+          if (data.users) localStorage.setItem("elite_pro_users", JSON.stringify(data.users));
+          if (data.appointments) localStorage.setItem("elite_pro_appointments", JSON.stringify(data.appointments));
+          if (data.communicationLogs) localStorage.setItem("elite_pro_communication_logs", JSON.stringify(data.communicationLogs));
+          if (data.leadEditLogs) localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(data.leadEditLogs));
+        } else {
+          // Empty server cache. Seed current client-side state (including user's custom 4 leads) to server cache immediately.
+          const localLeads = localStorage.getItem("elite_pro_leads");
+          const localUsers = localStorage.getItem("elite_pro_users");
+          const localApps = localStorage.getItem("elite_pro_appointments");
+          const localLogs = localStorage.getItem("elite_pro_communication_logs");
+          const localEdits = localStorage.getItem("elite_pro_lead_edit_logs");
+
+          const initialSyncLeads = localLeads ? JSON.parse(localLeads) : leads;
+          const initialSyncUsers = localUsers ? JSON.parse(localUsers) : users;
+          const initialSyncApps = localApps ? JSON.parse(localApps) : appointments;
+          const initialSyncLogs = localLogs ? JSON.parse(localLogs) : communicationLogs;
+          const initialSyncEdits = localEdits ? JSON.parse(localEdits) : leadEditLogs;
+
+          await fetch("/api/crm/data", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              leads: initialSyncLeads,
+              users: initialSyncUsers,
+              appointments: initialSyncApps,
+              communicationLogs: initialSyncLogs,
+              leadEditLogs: initialSyncEdits
+            })
+          });
+        }
+      } catch (err) {
+        console.error("Failed to fetch server-side CRM cache:", err);
+      } finally {
+        setCrmDataLoaded(true);
+      }
+    };
+    fetchCrmData();
+  }, []);
 
 
 
@@ -612,21 +738,37 @@ export default function App() {
   // Handler: Add Lead
   const handleAddLead = async (newLead: Omit<Lead, "id" | "dateCreated" | "dateUpdated">) => {
     // Role-based Access Control authorization filter
-    if (currentUser?.role !== "super_admin" && currentUser?.role !== "admin") {
+    if (
+      currentUser?.role !== "super_admin" &&
+      currentUser?.role !== "admin" &&
+      currentUser?.role !== "team_leader" &&
+      currentUser?.role !== "sales_team"
+    ) {
       triggerAlert(
         "Access Refused",
-        `Only users with Super Admin or Admin authorization can add data or register new leads.`
+        `Only registered system users (Admins, Team Leaders, or Sales Advisors) can add data or register new leads.`
       );
       return;
     }
 
     const id = "lead-" + (leads.length + 1) + "-" + Math.random().toString(36).substr(2, 4);
     const createdDate = new Date().toISOString().split("T")[0];
+    
+    // Check if assignee is a Team Leader or Sales Team using highly resilient clean match
+    const cleanAgentName = (newLead.assignedAgent || "").trim().toLowerCase();
+    const assignedUser = users.find(
+      u => (u.name || "").trim().toLowerCase() === cleanAgentName && (u.role === "team_leader" || u.role === "sales_team")
+    );
+    const nowTimestamp = Date.now();
+
     const item: Lead = {
       ...newLead,
       id,
       dateCreated: createdDate,
-      dateUpdated: createdDate
+      dateUpdated: createdDate,
+      assignmentTimestamp: nowTimestamp,
+      lastActionTimestamp: nowTimestamp,
+      assignedTlId: assignedUser ? assignedUser.id : undefined,
     };
     setLeads(prev => [item, ...prev]);
 
@@ -648,6 +790,39 @@ export default function App() {
         leadName: item.name
       };
       setNotifications(prev => [newNotif, ...prev]);
+
+      // Automatically pop up notification dispatcher if assigned user is found and has a phone
+      if (assignedUser) {
+        const textMessage = `*ELITE PRO INFRA ADVISORY ALERT*\n\n` +
+          `Hello *${assignedUser.name}*,\n` +
+          `You have been assigned a new Client Lead!\n\n` +
+          `🔹 *Client:* ${item.name || "N/A"}\n` +
+          `🔹 *Project:* ${item.projectName || "N/A"}\n` +
+          `🔹 *Budget Plan:* ${item.budget || "N/A"}\n` +
+          `🔹 *Location:* ${item.location || "N/A"}\n` +
+          `🔹 *Reference Source:* ${item.source || "N/A"}\n` +
+          `💬 *Client Notes:* ${item.notes || "No extra notes."}\n\n` +
+          `Please contact the lead immediately. High conversion priority.`;
+        
+        const sanitizedPhone = (assignedUser.phone || "").replace(/[+\s-]/g, "");
+        const waHref = `https://wa.me/${sanitizedPhone}?text=${encodeURIComponent(textMessage)}`;
+        
+        setActiveAutoDispatch({
+          isOpen: true,
+          leadName: item.name,
+          agentName: assignedUser.name,
+          phone: assignedUser.phone || "N/A",
+          message: textMessage,
+          waHref,
+        });
+
+        // Add to live sync timeline logs
+        const localTime = new Date().toLocaleTimeString();
+        setSyncHistory(prev => [
+          `[${localTime}] - [AUTO ALERT STATUS] Staged real-time notification dispatch parameters for ${assignedUser.name}`,
+          ...prev
+        ]);
+      }
     }
 
 
@@ -692,10 +867,15 @@ export default function App() {
   // Handler: Bulk Add Leads (CSV/Excel ingestion)
   const handleBulkAddLeads = async (newLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[]) => {
     // Role-based Access Control authorization filter
-    if (currentUser?.role !== "super_admin" && currentUser?.role !== "admin") {
+    if (
+      currentUser?.role !== "super_admin" &&
+      currentUser?.role !== "admin" &&
+      currentUser?.role !== "team_leader" &&
+      currentUser?.role !== "sales_team"
+    ) {
       triggerAlert(
         "Access Refused",
-        `Only users with Super Admin or Admin authorization can bulk import or add data.`
+        `Only registered system users (Admins, Team Leaders, or Sales Advisors) can bulk import or add data.`
       );
       return;
     }
@@ -704,6 +884,7 @@ export default function App() {
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowStr = tomorrow.toISOString().split("T")[0];
+    const nowTimestamp = Date.now();
 
     const newItems: Lead[] = [];
     const newAppts: Appointment[] = [];
@@ -711,11 +892,17 @@ export default function App() {
     // Create batch lists to execute
     newLeads.forEach((nl, index) => {
       const id = "lead-bulk-" + (leads.length + index + 1) + "-" + Math.random().toString(36).substr(2, 4);
+      
+      const assignedUser = users.find(u => u.name.toLowerCase() === nl.assignedAgent?.toLowerCase());
+
       const item: Lead = {
         ...nl,
         id,
         dateCreated: createdDate,
-        dateUpdated: createdDate
+        dateUpdated: createdDate,
+        assignmentTimestamp: nl.assignedAgent ? nowTimestamp : undefined,
+        assignedTlId: assignedUser ? assignedUser.id : undefined,
+        lastActionTimestamp: nl.assignedAgent ? nowTimestamp : undefined,
       };
       newItems.push(item);
 
@@ -947,12 +1134,262 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, []);
 
+  // Sync initialization for pre-existing New Lead elements without tracking data
+  useEffect(() => {
+    let touched = false;
+    const now = Date.now();
+    const initializedLeads = leads.map(l => {
+      if (l.status === "New Lead" && !l.assignmentTimestamp) {
+        touched = true;
+        const assignedUser = users.find(u => u.name.toLowerCase() === l.assignedAgent.toLowerCase() && (u.role === "team_leader" || u.role === "sales_team"));
+        return {
+          ...l,
+          assignedTlId: assignedUser ? assignedUser.id : undefined,
+          assignmentTimestamp: now,
+          lastActionTimestamp: now
+        };
+      }
+      return l;
+    });
+    if (touched) {
+      setLeads(initializedLeads);
+    }
+  }, [users]);
+
+  // Background monitoring for 30-minute Lead Auto-Transfer Rule
+  useEffect(() => {
+    const checkAndReassignLeads = () => {
+      const now = Date.now();
+      const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in milliseconds
+      
+      let wasUpdated = false;
+      let newNotifications: AppNotification[] = [];
+      let newEditLogs: LeadEditLog[] = [];
+      
+      // Set of parsed, simplified lowercase names for robust matching of allowed auto-transfer users
+      const allowedNormalizeSet = new Set([
+        "rickymatharu",
+        "prabhjotsingh",
+        "shammyverma",
+        "sanjeevmehta",
+        "haarishkhan",
+        "vinaygrewal",
+        "vishallaller",
+        "yuvanshkapoor",
+        "pardeepsharma",
+        "chiragmehta",
+        "pawantanwar",
+        "deepanshugarg",
+        "ankitghudayia",
+        "devverma",
+        "kunalwadhwa",
+        "kaushalmidha",
+        "argho",
+        "jeevakraina",
+        "sahilarora",
+        "pratibhapawa"
+      ]);
+
+      const getNormalizedParts = (nameStr: string) => {
+        if (!nameStr) return [];
+        return nameStr.toLowerCase().replace(/\s+/g, '').split('/');
+      };
+
+      const isNameInAllowedList = (nameStr: string) => {
+        if (!nameStr) return false;
+        const parts = getNormalizedParts(nameStr);
+        const inPreset = parts.some(part => allowedNormalizeSet.has(part));
+        if (inPreset) return true;
+        return (users || []).some(u => {
+          if (u.role !== "sales_team" && u.role !== "team_leader") return false;
+          const uParts = getNormalizedParts(u.name);
+          return parts.some(p => uParts.includes(p)) || uParts.some(p => parts.includes(p));
+        });
+      };
+
+      const updatedLeadsList = leads.map(lead => {
+        if (lead.status !== "New Lead") return lead;
+        
+        // Is currently assigned to a Team Leader or Sales Team user?
+        const currentAgent = lead.assignedAgent;
+        const currentAssignee = users.find(u => {
+          const uParts = getNormalizedParts(u.name);
+          const agentParts = getNormalizedParts(currentAgent);
+          const nameMatches = uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
+          return nameMatches && (u.role === "team_leader" || u.role === "sales_team");
+        });
+        if (!currentAssignee) return lead; // not currently assigned to a TL or Sales Team agent
+
+        // Ensure current occupant of the lead is on the allowed list to trigger auto-transfer
+        if (!isNameInAllowedList(currentAgent)) return lead;
+        
+        // Find reference timestamp for measuring inactivity (last action time or original assignment time)
+        const referenceTime = Math.max(
+          lead.lastActionTimestamp || lead.assignmentTimestamp || 0,
+          lead.assignmentTimestamp || 0,
+          new Date(lead.dateUpdated || lead.dateCreated).getTime() || 0
+        );
+        
+        if (referenceTime === 0 || now - referenceTime < thirtyMinutes) {
+          return lead; // 30 minutes has not passed yet or no valid reference time
+        }
+        
+        // Get all members of the same role (team_leader or sales_team) for Round Robin distribution
+        const poolRole = currentAssignee.role;
+        const sameRolePool = users.filter(u => 
+          u.role === poolRole && 
+          isNameInAllowedList(u.name)
+        );
+        if (sameRolePool.length <= 1) return lead; // No other user of this role in the allowed list to transfer to
+        
+        const currentIndex = sameRolePool.findIndex(u => {
+          const uParts = getNormalizedParts(u.name);
+          const agentParts = getNormalizedParts(currentAgent);
+          return uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
+        });
+        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % sameRolePool.length;
+        const nextTeammate = sameRolePool[nextIndex];
+        
+        wasUpdated = true;
+        
+        // Create activity log message and notifications
+        const currentRoleLabel = poolRole === "team_leader" ? "Team Leader" : "Sales Advisor";
+        const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 30 minutes while status remained 'New Lead'.`;
+        
+        const newEditLog: LeadEditLog = {
+          id: "edit-log-auto-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+          leadId: lead.id,
+          leadName: lead.name,
+          editorName: "System Auto-Transfer Agent",
+          editorRole: "super_admin",
+          timestamp: new Date().toLocaleString("en-US", { 
+            timeStyle: "medium", 
+            dateStyle: "medium",
+            timeZone: "UTC"
+          }) + " UTC",
+          changes: [
+            { field: "assignedAgent", oldValue: currentAgent, newValue: nextTeammate.name }
+          ]
+        };
+        newEditLogs.push(newEditLog);
+        
+        // Message notifications
+        const notifPrev: AppNotification = {
+          id: "notif-prev-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+          recipientName: currentAgent,
+          title: "Lead Transferred Out (Inactivity)",
+          message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 30 minutes.`,
+          timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+          isRead: false,
+          type: "update",
+          leadId: lead.id,
+          leadName: lead.name
+        };
+        
+        const notifNext: AppNotification = {
+          id: "notif-next-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+          recipientName: nextTeammate.name,
+          title: "Inactivity Lead Assignment",
+          message: `Lead "${lead.name}" has been automatically transferred to you from ${currentAgent}.`,
+          timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+          isRead: false,
+          type: "assignment",
+          leadId: lead.id,
+          leadName: lead.name
+        };
+        
+        const notifAdmin: AppNotification = {
+          id: "notif-admin-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+          recipientName: "Admin",
+          title: "System Auto-Reassignment",
+          message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (5-min inactivity).`,
+          timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+          isRead: false,
+          type: "update",
+          leadId: lead.id,
+          leadName: lead.name
+        };
+        newNotifications.push(notifPrev, notifNext, notifAdmin);
+        
+        return {
+          ...lead,
+          assignedAgent: nextTeammate.name,
+          assignedTlId: nextTeammate.id,
+          assignmentTimestamp: now,
+          lastActionTimestamp: now,
+          reassignedTimestamp: now,
+          notes: lead.notes,
+          dateUpdated: new Date().toISOString().split("T")[0]
+        };
+      });
+      
+      if (wasUpdated) {
+        setNotifications(prev => [...newNotifications, ...prev]);
+        setLeadEditLogs(prev => [...newEditLogs, ...prev]);
+        setLeads(updatedLeadsList);
+        
+        // Sync to Supabase if enabled
+        if (isAutoSyncEnabled) {
+          const changedLeads = updatedLeadsList.filter(l => {
+            const original = leads.find(ol => ol.id === l.id);
+            return original && original.assignedAgent !== l.assignedAgent;
+          });
+          changedLeads.forEach(async cl => {
+            await dbUpsertLead(cl);
+          });
+          newEditLogs.forEach(async el => {
+            await dbUpsertLeadEditLog(el);
+          });
+        }
+      }
+    };
+    
+    // Check every 10 seconds
+    const intervalId = setInterval(checkAndReassignLeads, 10000);
+    return () => clearInterval(intervalId);
+  }, [leads, users, isAutoSyncEnabled]);
+
   // Handler: Update Lead
   const handleUpdateLead = async (updated: Lead) => {
     const oldLead = leads.find(l => l.id === updated.id);
     let newLog: LeadEditLog | null = null;
+    let finalUpdated = { ...updated };
     
     if (oldLead && currentUser) {
+      const now = Date.now();
+      const assigneeChanged = (oldLead.assignedAgent || "").trim().toLowerCase() !== (finalUpdated.assignedAgent || "").trim().toLowerCase();
+      
+      const cleanAgentNameUpdate = (finalUpdated.assignedAgent || "").trim().toLowerCase();
+      const newAssignee = users.find(
+        u => (u.name || "").trim().toLowerCase() === cleanAgentNameUpdate && (u.role === "team_leader" || u.role === "sales_team")
+      );
+      
+      if (newAssignee) {
+        finalUpdated.assignedTlId = newAssignee.id;
+        if (assigneeChanged) {
+          finalUpdated.assignmentTimestamp = now;
+          finalUpdated.lastActionTimestamp = now;
+        } else {
+          // Check if any trackable field actually changed to reset inactivity timer
+          const fieldsToTrack: (keyof Lead)[] = [
+            "name", "company", "position", "email", "phone", "source", "status", "temperature", "budget", "location", "notes", "score", "projectName"
+          ];
+          const hasChanges = fieldsToTrack.some(field => {
+            const oldVal = (oldLead[field] !== undefined && oldLead[field] !== null) ? String(oldLead[field]) : "";
+            const newVal = (finalUpdated[field] !== undefined && finalUpdated[field] !== null) ? String(finalUpdated[field]) : "";
+            return oldVal !== newVal;
+          });
+          if (hasChanges) {
+            finalUpdated.lastActionTimestamp = now;
+          }
+        }
+      } else {
+        // Clear if not TL or Sales Team
+        finalUpdated.assignedTlId = undefined;
+        finalUpdated.assignmentTimestamp = undefined;
+        finalUpdated.lastActionTimestamp = undefined;
+      }
+
       const changes: { field: string; oldValue: string; newValue: string }[] = [];
       const fieldsToTrack: (keyof Lead)[] = [
         "name", "company", "position", "email", "phone", "source", "status", "temperature", "budget", "location", "assignedAgent", "notes", "score", "projectName"
@@ -960,7 +1397,7 @@ export default function App() {
       
       fieldsToTrack.forEach(field => {
          const oldVal = (oldLead[field] !== undefined && oldLead[field] !== null) ? String(oldLead[field]) : "";
-         const newVal = (updated[field] !== undefined && updated[field] !== null) ? String(updated[field]) : "";
+         const newVal = (finalUpdated[field] !== undefined && finalUpdated[field] !== null) ? String(finalUpdated[field]) : "";
          if (oldVal !== newVal) {
            changes.push({
              field,
@@ -971,31 +1408,63 @@ export default function App() {
       });
 
       // Create an assignment notification if the assignee value has changed
-      if (oldLead.assignedAgent.toLowerCase() !== updated.assignedAgent.toLowerCase() && updated.assignedAgent) {
+      if (oldLead.assignedAgent.toLowerCase() !== finalUpdated.assignedAgent.toLowerCase() && finalUpdated.assignedAgent) {
         const newNotif: AppNotification = {
           id: "notif-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          recipientName: updated.assignedAgent,
+          recipientName: finalUpdated.assignedAgent,
           title: "New Lead Reassigned",
-          message: `Investor lead "${updated.name}" has been reassigned to you by ${currentUser.name}.`,
-          source: updated.source,
+          message: `Investor lead "${finalUpdated.name}" has been reassigned to you by ${currentUser.name}.`,
+          source: finalUpdated.source,
           timestamp: new Date().toLocaleString("en-US", { 
             timeStyle: "short", 
             dateStyle: "medium"
           }),
           isRead: false,
           type: "assignment",
-          leadId: updated.id,
-          leadName: updated.name
+          leadId: finalUpdated.id,
+          leadName: finalUpdated.name
         };
         setNotifications(prev => [newNotif, ...prev]);
+
+        // Auto notification dispatch window on reassignment
+        if (newAssignee) {
+          const textMessage = `*ELITE PRO INFRA ADVISORY ALERT*\n\n` +
+            `Hello *${newAssignee.name}*,\n` +
+            `You have been assigned a new Client Lead!\n\n` +
+            `🔹 *Client:* ${finalUpdated.name || "N/A"}\n` +
+            `🔹 *Project:* ${finalUpdated.projectName || "N/A"}\n` +
+            `🔹 *Budget Plan:* ${finalUpdated.budget || "N/A"}\n` +
+            `🔹 *Location:* ${finalUpdated.location || "N/A"}\n` +
+            `🔹 *Reference Source:* ${finalUpdated.source || "N/A"}\n` +
+            `💬 *Client Notes:* ${finalUpdated.notes || "No extra notes."}\n\n` +
+            `Please contact the lead immediately. High conversion priority.`;
+          
+          const sanitizedPhone = (newAssignee.phone || "").replace(/[+\s-]/g, "");
+          const waHref = `https://wa.me/${sanitizedPhone}?text=${encodeURIComponent(textMessage)}`;
+          
+          setActiveAutoDispatch({
+            isOpen: true,
+            leadName: finalUpdated.name,
+            agentName: newAssignee.name,
+            phone: newAssignee.phone || "N/A",
+            message: textMessage,
+            waHref,
+          });
+
+          const localTime = new Date().toLocaleTimeString();
+          setSyncHistory(prev => [
+            `[${localTime}] - [AUTO REASSIGN STATUS] Queued automated notification parameters for ${newAssignee.name}`,
+            ...prev
+          ]);
+        }
       }
 
       // Create an edit log if there are alterations
       if (changes.length > 0) {
         newLog = {
           id: "edit-log-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          leadId: updated.id,
-          leadName: updated.name,
+          leadId: finalUpdated.id,
+          leadName: finalUpdated.name,
           editorName: currentUser.name,
           editorRole: currentUser.role,
           timestamp: new Date().toLocaleString("en-US", { 
@@ -1008,11 +1477,11 @@ export default function App() {
         setLeadEditLogs(prev => [newLog!, ...prev]);
       }
     }
-    setLeads(prev => prev.map(l => l.id === updated.id ? updated : l));
+    setLeads(prev => prev.map(l => l.id === finalUpdated.id ? finalUpdated : l));
 
 
     if (isAutoSyncEnabled) {
-      const res = await dbUpsertLead(updated);
+      const res = await dbUpsertLead(finalUpdated);
       if (!res.success) {
         console.warn("Lead update save failed on Supabase:", res.error);
         triggerAlert(
@@ -1140,6 +1609,36 @@ export default function App() {
     );
   };
 
+  // Handler: Full Master Portfolios Recovery Restore
+  const handleRestoreCrmData = async (data: {
+    leads?: Lead[];
+    users?: User[];
+    appointments?: Appointment[];
+    communicationLogs?: CommunicationLog[];
+    leadEditLogs?: LeadEditLog[];
+  }) => {
+    if (data.leads && data.leads.length > 0) {
+      setLeads(data.leads);
+      localStorage.setItem("elite_pro_leads", JSON.stringify(data.leads));
+    }
+    if (data.users && data.users.length > 0) {
+      setUsers(data.users);
+      localStorage.setItem("elite_pro_users", JSON.stringify(data.users));
+    }
+    if (data.appointments && data.appointments.length > 0) {
+      setAppointments(data.appointments);
+      localStorage.setItem("elite_pro_appointments", JSON.stringify(data.appointments));
+    }
+    if (data.communicationLogs && data.communicationLogs.length > 0) {
+      setCommunicationLogs(data.communicationLogs);
+      localStorage.setItem("elite_pro_communication_logs", JSON.stringify(data.communicationLogs));
+    }
+    if (data.leadEditLogs && data.leadEditLogs.length > 0) {
+      setLeadEditLogs(data.leadEditLogs);
+      localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(data.leadEditLogs));
+    }
+  };
+
   // Handler: Add Communication Log
   const handleAddCommunicationLog = async (log: Omit<CommunicationLog, "id">) => {
     const id = "log-" + (communicationLogs.length + 1) + "-" + Math.random().toString(36).substr(2, 4);
@@ -1150,8 +1649,26 @@ export default function App() {
     setCommunicationLogs(prev => [item, ...prev]);
     setIsMobileModeActive(true); // Signal activity state icon on companion mobile sidebar
     
+    // Reset inactivity timer on parent lead by updating its lastActionTimestamp
+    const nowTimestamp = Date.now();
+    const currentDateStr = new Date().toISOString().split("T")[0];
+    let syncedParentLead: Lead | undefined;
+
+    setLeads(prev => prev.map(l => {
+      if (l.id === item.leadId) {
+        const updatedL = {
+          ...l,
+          lastActionTimestamp: nowTimestamp,
+          dateUpdated: currentDateStr
+        };
+        syncedParentLead = updatedL;
+        return updatedL;
+      }
+      return l;
+    }));
+
     if (isAutoSyncEnabled) {
-      const parentLead = leads.find(l => l.id === item.leadId);
+      const parentLead = syncedParentLead || leads.find(l => l.id === item.leadId);
       if (parentLead) {
         const leadRes = await dbUpsertLead(parentLead);
         if (!leadRes.success) {
@@ -1358,6 +1875,7 @@ export default function App() {
             setMetaAutoIngest={setMetaAutoIngest}
             lastMetaSynced={lastMetaSynced}
             setLastMetaSynced={setLastMetaSynced}
+            onRestoreCrmData={handleRestoreCrmData}
           />
         );
       case "users":
@@ -1509,20 +2027,48 @@ export default function App() {
                 <NotificationCenter
                   notifications={notifications}
                   currentUser={currentUser}
+                  users={users}
                   onMarkAsRead={(id) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n))}
                   onMarkAllAsRead={() => setNotifications(prev => prev.map(n => {
                     const isPrivileged = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
-                    if (isPrivileged || n.recipientName.toLowerCase() === currentUser.name.toLowerCase()) {
-                      return { ...n, isRead: true };
+                    let isRelevant = false;
+                    if (isPrivileged) {
+                      isRelevant = true;
+                    } else {
+                      const recipientLower = (n.recipientName || "").trim().toLowerCase();
+                      const currentUserNameLower = (currentUser?.name || "").trim().toLowerCase();
+                      if (recipientLower === currentUserNameLower) {
+                        isRelevant = true;
+                      } else if (currentUser?.role === 'team_leader') {
+                        const teamMemberNames = users
+                          .filter(u => u.teamLeaderId === currentUser?.id)
+                          .map(u => (u.name || "").trim().toLowerCase());
+                        isRelevant = teamMemberNames.includes(recipientLower);
+                      }
                     }
-                    return n;
+                    return isRelevant ? { ...n, isRead: true } : n;
                   }))}
                   onClearAll={() => {
                     const isPrivileged = currentUser?.role === 'super_admin' || currentUser?.role === 'admin';
                     if (isPrivileged) {
                       setNotifications([]);
                     } else {
-                      setNotifications(prev => prev.filter(n => n.recipientName.toLowerCase() !== currentUser?.name.toLowerCase()));
+                      setNotifications(prev => prev.filter(n => {
+                        const recipientLower = (n.recipientName || "").trim().toLowerCase();
+                        const currentUserNameLower = (currentUser?.name || "").trim().toLowerCase();
+                        if (recipientLower === currentUserNameLower) {
+                          return false; // Remove
+                        }
+                        if (currentUser?.role === 'team_leader') {
+                          const teamMemberNames = users
+                            .filter(u => u.teamLeaderId === currentUser?.id)
+                            .map(u => (u.name || "").trim().toLowerCase());
+                          if (teamMemberNames.includes(recipientLower)) {
+                            return false; // Remove
+                          }
+                        }
+                        return true; // Keep
+                      }));
                     }
                   }}
                   onNavigateToLead={(leadId) => {
@@ -1648,6 +2194,104 @@ export default function App() {
                   Acknowledge
                 </button>
               )}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Automated Real-time Dispatch Panel */}
+      {activeAutoDispatch && activeAutoDispatch.isOpen && (
+        <div id="auto-dispatch-panel-container" className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            onClick={() => setActiveAutoDispatch(null)}
+            className="absolute inset-0 bg-slate-950/70 backdrop-blur-xs"
+          />
+
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 15 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className={`relative max-w-md w-full p-6 rounded-2xl border shadow-2xl z-10 flex flex-col gap-4
+              ${darkMode 
+                ? "bg-slate-900 border-slate-800 text-slate-100" 
+                : "bg-white border-slate-200 text-slate-800"}`}
+          >
+            {/* Header */}
+            <div className="flex justify-between items-start border-b border-slate-100/10 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/15">
+                  <Send size={16} className="animate-pulse" />
+                </span>
+                <div>
+                  <h3 className="font-display font-bold text-sm tracking-tight">Lead Assignment Dispatcher</h3>
+                  <p className="text-[10px] text-slate-400 mt-0.5 font-mono">Real-time Admin notification system</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setActiveAutoDispatch(null)}
+                className="p-1 rounded-lg hover:bg-slate-800/10 text-slate-400 hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Staged Recipient Stats */}
+            <div className={`p-3 rounded-xl border text-xs leading-relaxed space-y-1.5
+              ${darkMode ? "bg-slate-950/40 border-slate-850" : "bg-slate-50 border-slate-150"}`}
+            >
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-mono uppercase text-[9px] tracking-wider">Assigned Agent</span>
+                <span className="font-semibold text-emerald-400">👤 {activeAutoDispatch.agentName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-mono uppercase text-[9px] tracking-wider">Contact Phone</span>
+                <span className="font-mono font-medium text-slate-200">{activeAutoDispatch.phone}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-mono uppercase text-[9px] tracking-wider">Staged Lead</span>
+                <span className="font-semibold text-teal-400">🏷️ {activeAutoDispatch.leadName}</span>
+              </div>
+            </div>
+
+            {/* Message Preview */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono text-slate-400 uppercase tracking-widest font-semibold">Message Outbox Template</label>
+              <textarea
+                readOnly
+                value={activeAutoDispatch.message}
+                rows={6}
+                className={`w-full p-3 font-mono text-[10.5px] leading-relaxed rounded-xl border outline-none
+                  ${darkMode ? "bg-slate-950 border-slate-800 text-slate-300 animate-none" : "bg-white border-slate-205 text-slate-702 shadow-inner"}`}
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2.5 mt-1">
+              <button
+                onClick={() => setActiveAutoDispatch(null)}
+                className={`flex-1 py-2.5 rounded-xl text-xs font-semibold border transition cursor-pointer select-none active:scale-97
+                  ${darkMode 
+                    ? "border-slate-850 bg-slate-950/40 hover:bg-slate-950 text-slate-400" 
+                    : "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500"}`}
+              >
+                Dismiss
+              </button>
+              
+              <a
+                href={activeAutoDispatch.waHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => {
+                  // Wait brief moment and clear queue to maintain clean UI flow
+                  setTimeout(() => setActiveAutoDispatch(null), 800);
+                }}
+                className="flex-1 py-2.5 rounded-xl text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 hover:shadow-lg hover:shadow-emerald-500/10 transition flex items-center justify-center gap-1.5 cursor-pointer select-none active:scale-97"
+              >
+                <MessageSquare size={14} />
+                Send Alert Now
+                <ExternalLink size={10} />
+              </a>
             </div>
           </motion.div>
         </div>

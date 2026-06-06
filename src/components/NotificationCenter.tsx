@@ -22,6 +22,7 @@ interface NotificationCenterProps {
   onClearAll: () => void;
   onNavigateToLead?: (leadId: string) => void;
   darkMode: boolean;
+  users?: User[];
 }
 
 export default function NotificationCenter({
@@ -32,6 +33,7 @@ export default function NotificationCenter({
   onClearAll,
   onNavigateToLead,
   darkMode,
+  users,
 }: NotificationCenterProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'all' | 'unread'>('unread');
@@ -49,13 +51,37 @@ export default function NotificationCenter({
   }, []);
 
   // Filter notifications based on role
-  // TL & Sales Team only see notifications assigned directly to them.
+  // TL sees team notifications. Sales Team sees notifications assigned directly to them.
   // Super Admin and Admin can see ALL notifications in the system to monitor active workflow routing.
   const isPrivileged = currentUser.role === "super_admin" || currentUser.role === "admin";
   
   const relevantNotifications = notifications.filter(notif => {
     if (isPrivileged) return true;
-    return notif.recipientName.toLowerCase() === currentUser.name.toLowerCase();
+    
+    const recipientLower = (notif.recipientName || "").trim().toLowerCase();
+    const currentUserNameLower = (currentUser.name || "").trim().toLowerCase();
+    
+    if (recipientLower === currentUserNameLower) return true;
+    
+    // For Team Leaders, also include notifications for members of their team
+    if (currentUser.role === "team_leader") {
+      const activeUsers = users || (() => {
+        try {
+          const saved = localStorage.getItem("elite_pro_users");
+          return saved ? JSON.parse(saved) : [];
+        } catch {
+          return [];
+        }
+      })();
+      
+      const teamMemberNames = activeUsers
+        .filter((u: any) => u.teamLeaderId === currentUser.id)
+        .map((u: any) => (u.name || "").trim().toLowerCase());
+        
+      return teamMemberNames.includes(recipientLower);
+    }
+    
+    return false;
   });
 
   const unreadCount = relevantNotifications.filter(n => !n.isRead).length;
@@ -66,6 +92,48 @@ export default function NotificationCenter({
     }
     return true;
   });
+
+  const maskText = (text: string): string => {
+    if (!text) return text;
+    if (!currentUser || (currentUser.role !== "sales_team" && currentUser.role !== "team_leader")) {
+      return text;
+    }
+
+    let masked = text;
+    const activeUsers: User[] = users || (() => {
+      try {
+        const saved = localStorage.getItem("elite_pro_users");
+        return saved ? JSON.parse(saved) : [];
+      } catch {
+        return [];
+      }
+    })();
+
+    const namesToMask = activeUsers
+      .map(u => u.name)
+      .filter((name): name is string => typeof name === "string" && name.trim().length > 0 && name.toLowerCase() !== currentUser.name.toLowerCase())
+      .sort((a, b) => b.length - a.length);
+
+    const safetyPreserves = [
+      "Jeevak Raina",
+      "Kunal Wadhwa",
+      "Kaushal Midha",
+      "Rajan Srivastava",
+    ];
+    safetyPreserves.forEach(pName => {
+      if (pName.toLowerCase() !== currentUser.name.toLowerCase() && !namesToMask.includes(pName)) {
+        namesToMask.push(pName);
+      }
+    });
+
+    namesToMask.forEach(name => {
+      const escaped = name.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+      const regex = new RegExp(escaped, 'gi');
+      masked = masked.replace(regex, "••••••");
+    });
+
+    return masked;
+  };
 
   const getSourceBadgeColor = (source?: string) => {
     const s = (source || "").toLowerCase();
@@ -209,7 +277,7 @@ export default function NotificationCenter({
                       </div>
 
                       <p className={`text-xs mt-1 leading-snug break-words ${darkMode ? 'text-slate-350' : 'text-slate-650'}`}>
-                        {notif.message}
+                        {maskText(notif.message)}
                       </p>
 
                       <div className="flex items-center justify-between mt-2.5">

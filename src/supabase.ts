@@ -22,6 +22,7 @@ export function mapUserFromDb(row: any): User {
     id: row.id,
     name: row.name,
     email: row.email,
+    phone: row.phone || undefined,
     role: row.role,
     avatarUrl: row.avatar_url,
     department: row.department,
@@ -36,6 +37,7 @@ export function mapUserToDb(user: User): any {
     id: user.id,
     name: user.name,
     email: user.email,
+    phone: user.phone || null,
     role: user.role,
     avatar_url: user.avatarUrl,
     department: user.department,
@@ -64,7 +66,11 @@ export function mapLeadFromDb(row: any): Lead {
     dateCreated: row.date_created,
     dateUpdated: row.date_updated,
     lastCommunication: row.last_communication,
-    score: row.score
+    score: row.score,
+    assignmentTimestamp: row.assignment_timestamp ? Number(row.assignment_timestamp) : undefined,
+    assignedTlId: row.assigned_tl_id || undefined,
+    lastActionTimestamp: row.last_action_timestamp ? Number(row.last_action_timestamp) : undefined,
+    reassignedTimestamp: row.reassigned_timestamp ? Number(row.reassigned_timestamp) : undefined
   };
 }
 
@@ -87,7 +93,11 @@ export function mapLeadToDb(lead: Lead): any {
     date_created: lead.dateCreated,
     date_updated: lead.dateUpdated,
     last_communication: lead.lastCommunication,
-    score: lead.score
+    score: lead.score,
+    assignment_timestamp: lead.assignmentTimestamp || null,
+    assigned_tl_id: lead.assignedTlId || null,
+    last_action_timestamp: lead.lastActionTimestamp || null,
+    reassigned_timestamp: lead.reassignedTimestamp || null
   };
 }
 

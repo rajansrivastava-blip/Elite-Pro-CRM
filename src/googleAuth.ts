@@ -283,16 +283,19 @@ export function mapSpreadsheetRowsToLeads(
     }
 
     // Normalize Status
-    let status: LeadStatus = "Interested";
+    let status: LeadStatus = "New Lead";
     if (statusIdx !== -1) {
       const parsedStatus = String(row[statusIdx] || "").trim().toLowerCase();
-      if (parsedStatus.includes("follow")) status = "Follow Up";
+      if (parsedStatus.includes("new lead") || parsedStatus.includes("newlead")) status = "New Lead";
+      else if (parsedStatus.includes("interested")) status = "Interested";
+      else if (parsedStatus.includes("follow")) status = "Follow Up";
       else if (parsedStatus.includes("share") || parsedStatus.includes("detail")) status = "Detailed Share";
       else if (parsedStatus.includes("not interested")) status = "Not Interested";
       else if (parsedStatus.includes("meeting")) status = "Meeting Done";
       else if (parsedStatus.includes("visit") || parsedStatus.includes("site")) status = "Site Visit";
       else if (parsedStatus.includes("callback")) status = "Call Back";
       else if (parsedStatus.includes("junk") || parsedStatus.includes("spam")) status = "Junk";
+      else if (parsedStatus.includes("not pick") || parsedStatus.includes("no pick") || parsedStatus.includes("notpick") || parsedStatus.includes("nopick")) status = "Not Pick";
       else if (parsedStatus.includes("duplicate")) status = "Duplicate";
     }
 

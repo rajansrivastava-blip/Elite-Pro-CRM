@@ -4,6 +4,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  phone?: string;
   role: UserRole;
   avatarUrl?: string;
   department: string;
@@ -32,7 +33,9 @@ export type LeadStatus =
   | 'Site Visit' 
   | 'Call Back' 
   | 'Junk' 
-  | 'Duplicate';
+  | 'Duplicate'
+  | 'Not Pick'
+  | 'New Lead';
 
 export type LeadTemperature = 'Hot' | 'Warm' | 'Cold' | 'Dead';
 
@@ -55,6 +58,10 @@ export interface Lead {
   dateUpdated: string;
   lastCommunication: string;
   score?: number; // Priority rating (1-100)
+  assignmentTimestamp?: number;
+  assignedTlId?: string;
+  lastActionTimestamp?: number;
+  reassignedTimestamp?: number;
 }
 
 export type AppointmentType = 'meeting' | 'site_visit' | 'call' | 'followup';

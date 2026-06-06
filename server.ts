@@ -104,7 +104,7 @@ app.get("/api/settings", (req, res) => {
     autoSheetsSync: false,
     lastSheetsSynced: "Never",
     metaVerifyToken: "elite_pro_meta_verify_token_2026",
-    metaAutoIngest: true,
+    metaAutoIngest: false,
     lastMetaSynced: "Never"
   });
 });
@@ -118,6 +118,32 @@ app.post("/api/settings", (req, res) => {
     return res.json({ success: true });
   } catch (err: any) {
     console.error("Failed to write settings to path:", err);
+    return res.status(500).json({ error: err.message || String(err) });
+  }
+});
+
+// Endpoint: Dynamic file-based server representation for active CRM state (Leads, Appointments, Users, etc.)
+const crmDataPath = path.join(process.cwd(), "crm_data_cache.json");
+
+app.get("/api/crm/data", (req, res) => {
+  try {
+    if (fs.existsSync(crmDataPath)) {
+      const data = fs.readFileSync(crmDataPath, "utf-8");
+      return res.json(JSON.parse(data));
+    }
+  } catch (err) {
+    console.error("Failed to read CRM data cache from filesystem:", err);
+  }
+  return res.json({});
+});
+
+app.post("/api/crm/data", (req, res) => {
+  try {
+    const payload = req.body || {};
+    fs.writeFileSync(crmDataPath, JSON.stringify(payload, null, 2), "utf-8");
+    return res.json({ success: true, timestamp: new Date().toISOString() });
+  } catch (err: any) {
+    console.error("Failed to write CRM data cache to filesystem:", err);
     return res.status(500).json({ error: err.message || String(err) });
   }
 });

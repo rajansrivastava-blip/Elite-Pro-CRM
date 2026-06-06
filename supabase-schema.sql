@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS public.users (
     id TEXT PRIMARY KEY,                       -- Matching Supabase auth.users.id
     name TEXT NOT NULL,                        -- Full name of advisor
     email TEXT NOT NULL UNIQUE,                -- Corporate email address
+    phone TEXT,                                -- Direct WhatsApp / Mobile connection
     role TEXT NOT NULL DEFAULT 'sales_team',   -- super_admin | admin | sales_team
     avatar_url TEXT,                           -- Profile image photo URL
     department TEXT NOT NULL DEFAULT 'Sales',  -- Advisory branch/team department
@@ -39,10 +40,14 @@ CREATE TABLE IF NOT EXISTS public.leads (
     assigned_agent TEXT,                       -- Email/ID of assigned consultant/broker
     notes TEXT,                                -- Freeform conversation/history details
     project_name TEXT,                         -- Property developer project interest
-    date_created TEXT,                         -- Timestamp created
-    date_updated TEXT,                         -- Timestamp updated
+    date_created TEXT,                         -- Description created
+    date_updated TEXT,                         -- Description updated
     last_communication TEXT,                   -- Timestamp of last communication action
-    score INTEGER NOT NULL DEFAULT 50          -- Dynamic lead prioritising score (1-100)
+    score INTEGER NOT NULL DEFAULT 50,         -- Dynamic lead prioritising score (1-100)
+    assignment_timestamp BIGINT,               -- Miliseconds timestamp of assignment
+    assigned_tl_id TEXT,                       -- Direct leader assignee ID matching users
+    last_action_timestamp BIGINT,              -- Inactivity tracking reset timestamp
+    reassigned_timestamp BIGINT                -- Redundant backup assignment timestamp
 );
 
 -- Create simple speed index for common filters
@@ -98,6 +103,12 @@ CREATE TABLE IF NOT EXISTS public.lead_edit_logs (
 -- during testing, run these commands to bypass RLS.
 -- --------------------------------------------------------------------
 ALTER TABLE public.users ADD COLUMN IF NOT EXISTS password TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS phone TEXT;
+
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS assignment_timestamp BIGINT;
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS assigned_tl_id TEXT;
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS last_action_timestamp BIGINT;
+ALTER TABLE public.leads ADD COLUMN IF NOT EXISTS reassigned_timestamp BIGINT;
 
 ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
 ALTER TABLE public.leads DISABLE ROW LEVEL SECURITY;
