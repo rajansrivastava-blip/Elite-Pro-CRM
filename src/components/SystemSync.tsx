@@ -1001,6 +1001,12 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
               Fetches records from connected Google Spreadsheets, processes contact structures, and transfers new leads directly to the CRM (fully auto-assigning to Admin).
             </p>
+            <div className={`mt-2 p-2.5 rounded-xl border text-[11px] leading-relaxed flex gap-2 items-start
+              ${darkMode ? "bg-teal-500/5 border-teal-500/10 text-slate-400" : "bg-teal-50/50 border-teal-100/50 text-slate-600"}`}
+            >
+              <span className="text-teal-400 font-bold shrink-0">💡 Quick Bypass:</span>
+              <span>Google Login is <strong>optional</strong>! Simply share your Spreadsheet as <strong className="text-teal-400 font-medium">"Anyone with the link can view"</strong> and click <strong className="text-teal-400 font-medium">"Sync & Ingest"</strong> directly. This completely bypasses Firebase domain auth restrictions!</span>
+            </div>
 
             {/* Inputs block */}
             <div className="mt-4 pt-3 border-t border-slate-150/10 dark:border-slate-800/40 space-y-3">
@@ -1097,7 +1103,46 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
                 ) : (
                   <Info size={13} className="shrink-0 mt-0.5" />
                 )}
-                <div className="flex-1">{sheetsFeedback.message}</div>
+                <div className="flex-1">
+                  <div>{sheetsFeedback.message}</div>
+                  
+                  {/* Specialized domain-resolution & bypass instructions panel */}
+                  {sheetsFeedback.type === "error" && (sheetsFeedback.message.toLowerCase().includes("unauthorized-domain") || sheetsFeedback.message.toLowerCase().includes("auth/") || sheetsFeedback.message.toLowerCase().includes("domain")) && (
+                    <div className="mt-3 pt-3 border-t border-rose-500/25 text-left space-y-3 font-normal text-slate-300">
+                      <div className="flex items-center gap-1.5 font-bold text-rose-400 uppercase tracking-wider text-[10px]">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping shrink-0" />
+                        <span>Hostinger & Custom Domain Setup Resolution</span>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        <div className="font-semibold text-teal-400 text-[10px] uppercase font-mono tracking-wider">🚀 Option A (Instant Bypass - Recommended):</div>
+                        <p className="text-[10.5px] leading-relaxed">
+                          You do not need to authenticate with Google to sync! Simply share the spreadsheet and pull data directly:
+                        </p>
+                        <ol className="list-decimal pl-4.5 space-y-1 text-[10px] text-slate-350">
+                          <li>Open your Google Spreadsheet.</li>
+                          <li>Click the <strong className="text-white">Share</strong> button in the top-right corner.</li>
+                          <li>Under General Access, change from <strong className="text-slate-450 border border-slate-800 bg-slate-950 px-1 py-0.5 rounded italic">"Restricted"</strong> to <strong className="text-emerald-400">"Anyone with the link can view"</strong>.</li>
+                          <li>Paste the spreadsheet URL or ID in the input box above and click the green <strong className="text-teal-400">"Sync & Ingest"</strong> button directly! Our server will proxy the public feed instantly!</li>
+                        </ol>
+                      </div>
+
+                      <div className="space-y-2 pt-1 border-t border-slate-800">
+                        <div className="font-semibold text-slate-350 text-[10px] uppercase font-mono tracking-wider">🛠️ Option B (Authorize custom domain in Firebase console):</div>
+                        <p className="text-[10.5px] leading-relaxed">
+                          If you absolutely require signing in with your Google Account for private spreadsheets:
+                        </p>
+                        <ol className="list-decimal pl-4.5 space-y-1 text-[10px] text-slate-355">
+                          <li>Go to the <a href="https://console.firebase.google.com" target="_blank" rel="noreferrer" className="text-teal-400 underline hover:text-teal-300 font-medium">Firebase Console</a> and select your CRM project.</li>
+                          <li>Navigate to <strong className="text-white">Authentication</strong> &gt; <strong className="text-white">Settings</strong> &gt; <strong className="text-white font-medium">Authorized domains</strong>.</li>
+                          <li>Click <strong className="text-teal-400 font-medium">"Add domain"</strong> and input your Hostinger website domain (e.g., <code className="font-mono bg-slate-950 text-amber-300 px-1 rounded-sm text-[9.5px]">eliteproinfra.com</code> or web IP).</li>
+                          <li>Go to <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="text-teal-400 underline hover:text-teal-300 font-medium">Google Cloud Console</a> &gt; <strong className="text-white font-medium">APIs & Services</strong> &gt; <strong className="text-white font-medium">Credentials</strong>.</li>
+                          <li>Under OAuth 2.0 Client IDs, edit your Web Client and add your domain URL (including <code className="font-mono bg-slate-950 text-cyan-300 px-1 rounded-sm text-[9.5px]">https://</code>) to the list of <strong className="text-semibold">Authorized JavaScript origins</strong> and <strong className="text-semibold">Authorized redirect URIs</strong>.</li>
+                        </ol>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 

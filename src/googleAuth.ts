@@ -160,13 +160,40 @@ export async function fetchGoogleSheetValues(
   };
 
   const tryPublicCsvCall = async () => {
-    const url = `/api/proxy-sheet-csv?spreadsheetId=${cleanId}&sheet=${encodeURIComponent(sheetName)}`;
-    const response = await fetch(url);
-    if (!response.ok) {
-      const errorDetails = await response.json().catch(() => ({}));
-      throw new Error(errorDetails?.error || `Public export failed. If this spreadsheet is private, kindly ensure Google login credentials are valid and active. If it is public, verify that 'Anyone with the link can view/comment/edit' is selected in Google Drive Share settings.`);
+    let response;
+    let fallbackToDirect = false;
+    try {
+      const url = `/api/proxy-sheet-csv?spreadsheetId=${cleanId}&sheet=${encodeURIComponent(sheetName)}`;
+      response = await fetch(url);
+      if (!response.ok) {
+        if (response.status === 404) {
+          fallbackToDirect = true;
+        } else {
+          const errorDetails = await response.json().catch(() => ({}));
+          throw new Error(errorDetails?.error || `Public export server proxy rejected with status ${response.status}`);
+        }
+      }
+    } catch (err) {
+      fallbackToDirect = true;
     }
-    const csvText = await response.text();
+
+    if (fallbackToDirect) {
+      console.log(`[Google Sheets Direct Fallback] Backend proxy returned 404 or failed. Attempting direct browser CSV pull from Google Sheets.`);
+      const directUrl = `https://docs.google.com/spreadsheets/d/${cleanId}/export?format=csv` + 
+        (sheetName ? `&sheet=${encodeURIComponent(String(sheetName))}` : "");
+      try {
+        const directRes = await fetch(directUrl);
+        if (!directRes.ok) {
+          throw new Error(`Google Sheets export returned status ${directRes.status}. Please make sure 'Anyone with the link can view' is enabled in Google Spreadsheet Share settings.`);
+        }
+        const csvText = await directRes.text();
+        return parseCSV(csvText);
+      } catch (directErr: any) {
+        throw new Error(`Direct Google Sheets fetch failed: ${directErr.message || String(directErr)}. Web-host returned HTTP 404 (Node server is bypassed or disabled on static hosting).`);
+      }
+    }
+
+    const csvText = await response!.text();
     return parseCSV(csvText);
   };
 

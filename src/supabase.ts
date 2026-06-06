@@ -1,4 +1,40 @@
 import { User, Lead, Appointment, CommunicationLog, LeadEditLog } from "./types";
+import { createClient } from "@supabase/supabase-js";
+
+// ==========================================
+// CLIENT-SIDE DIRECT SUPABASE CLIENT INITIALIZATION
+// ==========================================
+
+const RAW_URL = (import.meta as any).env?.VITE_SUPABASE_URL || "https://fzsjeukjjjutiihhzjgu.supabase.co";
+const RAW_KEY = (import.meta as any).env?.VITE_SUPABASE_ANON_KEY || "sb_publishable_PTNuV0AtVvNGIUKk9P6nIA_DcgGCrk1";
+
+let SUPABASE_URL = String(RAW_URL).trim();
+let SUPABASE_ANON_KEY = String(RAW_KEY).trim();
+
+// Swapped configuration recovery (similar to server-side check)
+if (SUPABASE_URL.startsWith("sb_publishable_") || SUPABASE_URL.startsWith("sb_secret_")) {
+  SUPABASE_URL = "https://fzsjeukjjjutiihhzjgu.supabase.co";
+}
+
+let formattedUrl = SUPABASE_URL;
+if (formattedUrl.endsWith("/rest/v1/")) {
+  formattedUrl = formattedUrl.substring(0, formattedUrl.length - "/rest/v1/".length);
+} else if (formattedUrl.endsWith("/rest/v1")) {
+  formattedUrl = formattedUrl.substring(0, formattedUrl.length - "/rest/v1".length);
+}
+if (formattedUrl.endsWith("/")) {
+  formattedUrl = formattedUrl.substring(0, formattedUrl.length - 1);
+}
+if (!formattedUrl || typeof formattedUrl !== "string" || !formattedUrl.startsWith("http")) {
+  formattedUrl = "https://fzsjeukjjjutiihhzjgu.supabase.co";
+}
+
+export const clientSupabase = createClient(formattedUrl, SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: false,
+    detectSessionInUrl: false
+  }
+});
 
 // State to track if Supabase is fully configured and tables exist
 export interface SupabaseStatus {
@@ -178,6 +214,108 @@ export function mapLeadEditLogToDb(log: LeadEditLog): any {
 }
 
 // ==========================================
+// RESILIENT CLIENT DIRECT UPSERT
+// ==========================================
+
+async function resilientClientUpsert(tableName: string, payload: any): Promise<{ success: boolean; error?: any }> {
+  let currentPayload = JSON.parse(JSON.stringify(payload));
+  const removedColumns = new Set<string>();
+  
+  while (true) {
+    const { error } = await clientSupabase.from(tableName).upsert(currentPayload);
+    if (!error) {
+      return { success: true };
+    }
+    
+    let colName: string | null = null;
+    if (error.message) {
+      const matchSchema = error.message.match(/Could not find the '([^']+)' column/i);
+      if (matchSchema && matchSchema[1]) {
+        colName = matchSchema[1];
+      }
+      if (!colName) {
+        const matchDouble = error.message.match(/column "([^"]+)"/i);
+        if (matchDouble && matchDouble[1]) {
+          colName = matchDouble[1];
+        }
+      }
+      if (!colName) {
+        const matchSingle = error.message.match(/column '([^']+)'/i);
+        if (matchSingle && matchSingle[1]) {
+          colName = matchSingle[1];
+        }
+      }
+    }
+    
+    const isMissingColumnError = error.code === "42703" || !!colName ||
+      (error.message && (
+        error.message.includes("does not exist") || 
+        error.message.includes("schema cache") || 
+        error.message.includes("column")
+      ));
+      
+    if (isMissingColumnError && colName) {
+      if (removedColumns.has(colName)) {
+        return { success: false, error };
+      }
+      removedColumns.add(colName);
+      console.warn(`[Client Direct Supabase] Column "${colName}" does not exist in table "${tableName}". Filtering it out and retrying.`);
+      
+      if (Array.isArray(currentPayload)) {
+        currentPayload = currentPayload.map((item: any) => {
+          const copy = { ...item };
+          delete copy[colName];
+          return copy;
+        });
+      } else {
+        delete currentPayload[colName];
+      }
+      continue;
+    }
+    
+    return { success: false, error };
+  }
+}
+
+// ==========================================
+// DB STATUS CHECKER FALLBACK
+// ==========================================
+
+async function checkClientSupabaseStatus(): Promise<SupabaseStatus> {
+  try {
+    const checkTable = async (tableName: string): Promise<boolean> => {
+      const { error } = await clientSupabase.from(tableName).select("count", { count: "exact", head: true });
+      return !error || (error.code !== "42P01" && error.code !== "P0001");
+    };
+
+    const usersOk = await checkTable("users");
+    const leadsOk = await checkTable("leads");
+    const appointmentsOk = await checkTable("appointments");
+    const communicationLogsOk = await checkTable("communication_logs");
+    const leadEditLogsOk = await checkTable("lead_edit_logs");
+
+    return {
+      isConnected: usersOk || leadsOk,
+      tablesVerified: {
+        users: usersOk,
+        leads: leadsOk,
+        appointments: appointmentsOk,
+        communication_logs: communicationLogsOk,
+        lead_edit_logs: leadEditLogsOk
+      }
+    };
+  } catch (err: any) {
+    return {
+      isConnected: false,
+      tablesVerified: {
+        users: false, leads: false, appointments: false, communication_logs: false, lead_edit_logs: false
+      },
+      error: err.message || String(err)
+    };
+  }
+}
+
+// ==========================================
 // CORE DB DATA SYNC - BULK / SEED OPERATIONS
 // ==========================================
 
@@ -185,21 +323,51 @@ export async function checkSupabaseStatus(): Promise<SupabaseStatus> {
   try {
     const res = await fetch("/api/db/status");
     if (!res.ok) {
+      if (res.status === 404) {
+        console.warn("[checkSupabaseStatus] /api/db/status returns 404 (static web host). Querying Supabase directly.");
+        return await checkClientSupabaseStatus();
+      }
       throw new Error(`Server returned HTTP status ${res.status}`);
     }
     return await res.json();
   } catch (err: any) {
-    return {
-      isConnected: false,
-      tablesVerified: {
-        users: false,
-        leads: false,
-        appointments: false,
-        communication_logs: false,
-        lead_edit_logs: false,
-      },
-      error: err.message || String(err)
-    };
+    console.warn("[checkSupabaseStatus] HTTP query failed, falling back to direct browser verification:", err);
+    return await checkClientSupabaseStatus();
+  }
+}
+
+async function pushLocalClientData(payload: {
+  users: any[];
+  leads: any[];
+  appointments: any[];
+  communicationLogs: any[];
+  leadEditLogs: any[];
+}): Promise<{ success: boolean; errors: string[] }> {
+  const errors: string[] = [];
+  try {
+    if (payload.users && payload.users.length > 0) {
+      const { success, error } = await resilientClientUpsert("users", payload.users);
+      if (!success && error) errors.push(`Users push failed: ${error.message || JSON.stringify(error)}`);
+    }
+    if (payload.leads && payload.leads.length > 0) {
+      const { success, error } = await resilientClientUpsert("leads", payload.leads);
+      if (!success && error) errors.push(`Leads push failed: ${error.message || JSON.stringify(error)}`);
+    }
+    if (payload.appointments && payload.appointments.length > 0) {
+      const { success, error } = await resilientClientUpsert("appointments", payload.appointments);
+      if (!success && error) errors.push(`Appointments push failed: ${error.message || JSON.stringify(error)}`);
+    }
+    if (payload.communicationLogs && payload.communicationLogs.length > 0) {
+      const { success, error } = await resilientClientUpsert("communication_logs", payload.communicationLogs);
+      if (!success && error) errors.push(`Comm logs push failed: ${error.message || JSON.stringify(error)}`);
+    }
+    if (payload.leadEditLogs && payload.leadEditLogs.length > 0) {
+      const { success, error } = await resilientClientUpsert("lead_edit_logs", payload.leadEditLogs);
+      if (!success && error) errors.push(`Edit logs push failed: ${error.message || JSON.stringify(error)}`);
+    }
+    return { success: errors.length === 0, errors };
+  } catch (err: any) {
+    return { success: false, errors: [err.message || String(err)] };
   }
 }
 
@@ -210,28 +378,88 @@ export async function pushLocalDataToSupabase(data: {
   communicationLogs: CommunicationLog[];
   leadEditLogs: LeadEditLog[];
 }): Promise<{ success: boolean; errors: string[] }> {
-  try {
-    const payload = {
-      users: data.users.map(mapUserToDb),
-      leads: data.leads.map(mapLeadToDb),
-      appointments: data.appointments.map(mapAppointmentToDb),
-      communicationLogs: data.communicationLogs.map(mapCommunicationLogToDb),
-      leadEditLogs: data.leadEditLogs.map(mapLeadEditLogToDb)
-    };
+  const payload = {
+    users: data.users.map(mapUserToDb),
+    leads: data.leads.map(mapLeadToDb),
+    appointments: data.appointments.map(mapAppointmentToDb),
+    communicationLogs: data.communicationLogs.map(mapCommunicationLogToDb),
+    leadEditLogs: data.leadEditLogs.map(mapLeadEditLogToDb)
+  };
 
+  try {
     const res = await fetch("/api/db/push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    if (res.status === 404) {
+      console.warn("[pushLocalDataToSupabase] /api/db/push returned 404. Falling back to browser direct socket push.");
+      return await pushLocalClientData(payload);
+    }
     const parsed = await res.json();
     if (!res.ok) {
       return { success: false, errors: [parsed.error || "Push operation query rejected."] };
     }
     return { success: parsed.success, errors: parsed.errors || [] };
   } catch (err: any) {
-    return { success: false, errors: [err.message || String(err)] };
+    console.warn("[pushLocalDataToSupabase] REST proxy offline, triggering direct database bypass:", err);
+    return await pushLocalClientData(payload);
   }
+}
+
+async function pullClientSupabaseData(): Promise<{
+  users: User[] | null;
+  leads: Lead[] | null;
+  appointments: Appointment[] | null;
+  communicationLogs: CommunicationLog[] | null;
+  leadEditLogs: LeadEditLog[] | null;
+  errors: string[];
+}> {
+  const errors: string[] = [];
+  let users: any[] | null = null;
+  let leads: any[] | null = null;
+  let appointments: any[] | null = null;
+  let communicationLogs: any[] | null = null;
+  let leadEditLogs: any[] | null = null;
+
+  try {
+    const { data, error } = await clientSupabase.from("users").select("*");
+    if (error) errors.push(`Users: ${error.message}`);
+    else users = data || [];
+  } catch (e: any) { errors.push(`Client users extraction error: ${e.message}`); }
+
+  try {
+    const { data, error } = await clientSupabase.from("leads").select("*");
+    if (error) errors.push(`Leads: ${error.message}`);
+    else leads = data || [];
+  } catch (e: any) { errors.push(`Client leads extraction error: ${e.message}`); }
+
+  try {
+    const { data, error } = await clientSupabase.from("appointments").select("*");
+    if (error) errors.push(`Appointments: ${error.message}`);
+    else appointments = data || [];
+  } catch (e: any) { errors.push(`Client appointments extraction error: ${e.message}`); }
+
+  try {
+    const { data, error } = await clientSupabase.from("communication_logs").select("*");
+    if (error) errors.push(`Comm Logs: ${error.message}`);
+    else communicationLogs = data || [];
+  } catch (e: any) { errors.push(`Client comm logs extraction error: ${e.message}`); }
+
+  try {
+    const { data, error } = await clientSupabase.from("lead_edit_logs").select("*");
+    if (error) errors.push(`Lead Edit Logs: ${error.message}`);
+    else leadEditLogs = data || [];
+  } catch (e: any) { errors.push(`Client lead edit logs extraction error: ${e.message}`); }
+
+  return {
+    users: users ? users.map(mapUserFromDb) : [],
+    leads: leads ? leads.map(mapLeadFromDb) : [],
+    appointments: appointments ? appointments.map(mapAppointmentFromDb) : [],
+    communicationLogs: communicationLogs ? communicationLogs.map(mapCommunicationLogFromDb) : [],
+    leadEditLogs: leadEditLogs ? leadEditLogs.map(mapLeadEditLogFromDb) : [],
+    errors
+  };
 }
 
 export async function pullSupabaseData(): Promise<{
@@ -244,6 +472,10 @@ export async function pullSupabaseData(): Promise<{
 }> {
   try {
     const res = await fetch("/api/db/pull");
+    if (res.status === 404) {
+      console.warn("[pullSupabaseData] /api/db/pull returned 404 (static web host). Querying Supabase via Client Library.");
+      return await pullClientSupabaseData();
+    }
     if (!res.ok) {
       const parsedError = await res.json();
       return {
@@ -261,10 +493,8 @@ export async function pullSupabaseData(): Promise<{
       errors: parsed.errors || []
     };
   } catch (err: any) {
-    return {
-      users: null, leads: null, appointments: null, communicationLogs: null, leadEditLogs: null,
-      errors: [err.message || String(err)]
-    };
+    console.warn("[pullSupabaseData] REST server unavailable, invoking direct client query:", err);
+    return await pullClientSupabaseData();
   }
 }
 
@@ -273,19 +503,27 @@ export async function pullSupabaseData(): Promise<{
 // ==========================================
 
 export async function dbUpsertUser(user: User): Promise<{ success: boolean; error?: string }> {
+  const dbPayload = mapUserToDb(user);
   try {
     const res = await fetch("/api/db/upsert-user", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mapUserToDb(user))
+      body: JSON.stringify(dbPayload)
     });
+    if (res.status === 404) {
+      console.warn("[dbUpsertUser] Fallback to client-side direct upsert.");
+      const { success, error } = await resilientClientUpsert("users", dbPayload);
+      return { success, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbUpsertUser] Server route failed, performing direct socket write:", err);
+    const { success, error } = await resilientClientUpsert("users", dbPayload);
+    return { success, error: error?.message };
   }
 }
 
@@ -296,13 +534,26 @@ export async function dbGetUser(id: string): Promise<{ user: User | null; error?
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     });
+    if (res.status === 404) {
+      console.warn("[dbGetUser] Fallback to client-side direct query.");
+      const { data, error } = await clientSupabase.from("users").select("*").eq("id", id).maybeSingle();
+      if (error) return { user: null, error: error.message };
+      return { user: data ? mapUserFromDb(data) : null };
+    }
     const parsed = await res.json();
     if (!res.ok) {
       return { user: null, error: parsed.error || `HTTP ${res.status}` };
     }
     return { user: parsed.user ? mapUserFromDb(parsed.user) : null };
   } catch (err: any) {
-    return { user: null, error: err.message || String(err) };
+    console.warn("[dbGetUser] Server route failed, performing direct schema retrieval:", err);
+    try {
+      const { data, error } = await clientSupabase.from("users").select("*").eq("id", id).maybeSingle();
+      if (error) return { user: null, error: error.message };
+      return { user: data ? mapUserFromDb(data) : null };
+    } catch (e: any) {
+      return { user: null, error: e.message || String(e) };
+    }
   }
 }
 
@@ -313,30 +564,49 @@ export async function dbDeleteUser(id: string): Promise<{ success: boolean; erro
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     });
+    if (res.status === 404) {
+      console.warn("[dbDeleteUser] Fallback to client-side direct deletion.");
+      const { error } = await clientSupabase.from("users").delete().eq("id", id);
+      return { success: !error, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbDeleteUser] Server connection bypassed, using direct delete fallback:", err);
+    try {
+      const { error } = await clientSupabase.from("users").delete().eq("id", id);
+      return { success: !error, error: error?.message };
+    } catch (e: any) {
+      return { success: false, error: e.message || String(e) };
+    }
   }
 }
 
 export async function dbUpsertLead(lead: Lead): Promise<{ success: boolean; error?: string }> {
+  const dbPayload = mapLeadToDb(lead);
   try {
     const res = await fetch("/api/db/upsert-lead", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mapLeadToDb(lead))
+      body: JSON.stringify(dbPayload)
     });
+    if (res.status === 404) {
+      console.warn("[dbUpsertLead] Fallback to client-side direct upsert.");
+      const { success, error } = await resilientClientUpsert("leads", dbPayload);
+      return { success, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbUpsertLead] Server connection bypassed, using direct lead upsert fallback:", err);
+    const { success, error } = await resilientClientUpsert("leads", dbPayload);
+    return { success, error: error?.message };
   }
 }
 
@@ -347,30 +617,49 @@ export async function dbDeleteLead(id: string): Promise<{ success: boolean; erro
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     });
+    if (res.status === 404) {
+      console.warn("[dbDeleteLead] Fallback to client-side direct deletion.");
+      const { error } = await clientSupabase.from("leads").delete().eq("id", id);
+      return { success: !error, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbDeleteLead] Server connection bypassed, using direct lead drop fallback:", err);
+    try {
+      const { error } = await clientSupabase.from("leads").delete().eq("id", id);
+      return { success: !error, error: error?.message };
+    } catch (e: any) {
+      return { success: false, error: e.message || String(e) };
+    }
   }
 }
 
 export async function dbUpsertAppointment(app: Appointment): Promise<{ success: boolean; error?: string }> {
+  const dbPayload = mapAppointmentToDb(app);
   try {
     const res = await fetch("/api/db/upsert-appointment", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mapAppointmentToDb(app))
+      body: JSON.stringify(dbPayload)
     });
+    if (res.status === 404) {
+      console.warn("[dbUpsertAppointment] Fallback to client-side direct upsert.");
+      const { success, error } = await resilientClientUpsert("appointments", dbPayload);
+      return { success, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbUpsertAppointment] Server connection bypassed, using direct appointment upsert fallback:", err);
+    const { success, error } = await resilientClientUpsert("appointments", dbPayload);
+    return { success, error: error?.message };
   }
 }
 
@@ -381,47 +670,74 @@ export async function dbDeleteAppointment(id: string): Promise<{ success: boolea
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id })
     });
+    if (res.status === 404) {
+      console.warn("[dbDeleteAppointment] Fallback to client-side direct deletion.");
+      const { error } = await clientSupabase.from("appointments").delete().eq("id", id);
+      return { success: !error, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbDeleteAppointment] Server connection bypassed, using direct appointment drop fallback:", err);
+    try {
+      const { error } = await clientSupabase.from("appointments").delete().eq("id", id);
+      return { success: !error, error: error?.message };
+    } catch (e: any) {
+      return { success: false, error: e.message || String(e) };
+    }
   }
 }
 
 export async function dbUpsertCommunicationLog(log: CommunicationLog): Promise<{ success: boolean; error?: string }> {
+  const dbPayload = mapCommunicationLogToDb(log);
   try {
     const res = await fetch("/api/db/upsert-communication-log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mapCommunicationLogToDb(log))
+      body: JSON.stringify(dbPayload)
     });
+    if (res.status === 404) {
+      console.warn("[dbUpsertCommunicationLog] Fallback to client-side direct upsert.");
+      const { success, error } = await resilientClientUpsert("communication_logs", dbPayload);
+      return { success, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbUpsertCommunicationLog] Server connection bypassed, using direct log upsert fallback:", err);
+    const { success, error } = await resilientClientUpsert("communication_logs", dbPayload);
+    return { success, error: error?.message };
   }
 }
 
 export async function dbUpsertLeadEditLog(log: LeadEditLog): Promise<{ success: boolean; error?: string }> {
+  const dbPayload = mapLeadEditLogToDb(log);
   try {
     const res = await fetch("/api/db/upsert-lead-edit-log", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(mapLeadEditLogToDb(log))
+      body: JSON.stringify(dbPayload)
     });
+    if (res.status === 404) {
+      console.warn("[dbUpsertLeadEditLog] Fallback to client-side direct upsert.");
+      const { success, error } = await resilientClientUpsert("lead_edit_logs", dbPayload);
+      return { success, error: error?.message };
+    }
     if (!res.ok) {
       const parsed = await res.json();
       return { success: false, error: parsed.error || `HTTP ${res.status}` };
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbUpsertLeadEditLog] Server connection bypassed, using direct track changes fallback:", err);
+    const { success, error } = await resilientClientUpsert("lead_edit_logs", dbPayload);
+    return { success, error: error?.message };
   }
 }
 
@@ -436,13 +752,26 @@ export async function dbSignUp(email: string, password: string): Promise<{ data:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password })
     });
+    if (res.status === 404) {
+      console.warn("[dbSignUp] /api/auth/signup returned 404. Falling back to direct client-side Supabase auth.");
+      const { data, error } = await clientSupabase.auth.signUp({ email, password });
+      if (error) return { data: null, error: { message: error.message } };
+      return { data: { user: data.user } };
+    }
     const parsed = await res.json();
     if (!res.ok) {
       return { data: null, error: { message: parsed.error || "Establish credentials query failed." } };
     }
     return { data: { user: parsed.user } };
   } catch (err: any) {
-    return { data: null, error: { message: err.message || "Establish credentials connection exception." } };
+    console.warn("[dbSignUp] API failed, falling back to direct client-side auth:", err);
+    try {
+      const { data, error } = await clientSupabase.auth.signUp({ email, password });
+      if (error) return { data: null, error: { message: error.message } };
+      return { data: { user: data.user } };
+    } catch (e: any) {
+      return { data: null, error: { message: e.message || String(e) } };
+    }
   }
 }
 
@@ -453,13 +782,26 @@ export async function dbSignIn(email: string, password: string): Promise<{ data:
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password })
     });
+    if (res.status === 404) {
+      console.warn("[dbSignIn] /api/auth/login returned 404. Falling back to direct client-side Supabase auth.");
+      const { data, error } = await clientSupabase.auth.signInWithPassword({ email, password });
+      if (error) return { data: null, error: { message: error.message } };
+      return { data: { user: data.user } };
+    }
     const parsed = await res.json();
     if (!res.ok) {
       return { data: null, error: { message: parsed.error || "Bypass authenticate query failed." } };
     }
     return { data: { user: parsed.user } };
   } catch (err: any) {
-    return { data: null, error: { message: err.message || "Bypass authenticate connection exception." } };
+    console.warn("[dbSignIn] API failed, falling back to direct client-side auth:", err);
+    try {
+      const { data, error } = await clientSupabase.auth.signInWithPassword({ email, password });
+      if (error) return { data: null, error: { message: error.message } };
+      return { data: { user: data.user } };
+    } catch (e: any) {
+      return { data: null, error: { message: e.message || String(e) } };
+    }
   }
 }
 
@@ -467,20 +809,26 @@ export async function dbBulkUpsert(data: {
   leads?: Lead[];
   appointments?: Appointment[];
 }): Promise<{ success: boolean; error?: string }> {
-  try {
-    const payload = {
-      users: [],
-      leads: (data.leads || []).map(mapLeadToDb),
-      appointments: (data.appointments || []).map(mapAppointmentToDb),
-      communicationLogs: [],
-      leadEditLogs: []
-    };
+  const payload = {
+    users: [],
+    leads: (data.leads || []).map(mapLeadToDb),
+    appointments: (data.appointments || []).map(mapAppointmentToDb),
+    communicationLogs: [],
+    leadEditLogs: []
+  };
 
+  try {
     const res = await fetch("/api/db/push", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
+    
+    if (res.status === 404) {
+      console.warn("[dbBulkUpsert] /api/db/push returned 404. Falling back to direct client bulk insert.");
+      const result = await pushLocalClientData(payload);
+      return { success: result.success, error: result.errors?.join(", ") };
+    }
     
     if (!res.ok) {
       const parsed = await res.json().catch(() => ({}));
@@ -492,7 +840,8 @@ export async function dbBulkUpsert(data: {
     }
     return { success: true };
   } catch (err: any) {
-    return { success: false, error: err.message || String(err) };
+    console.warn("[dbBulkUpsert] Direct REST proxy offline, sending to database directly:", err);
+    const result = await pushLocalClientData(payload);
+    return { success: result.success, error: result.errors?.join(", ") };
   }
 }
-
