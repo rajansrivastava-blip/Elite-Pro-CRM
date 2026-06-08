@@ -28,7 +28,7 @@ export default function StakeholderReports({
   
   // Real-time statistics aggregation to prefill inputs
   const totalLeadsCount = leads.length;
-  const wonLeads = leads.filter(l => l.status === "Meeting Done" || l.status === "Site Visit");
+  const wonLeads = leads.filter(l => l.status === "Closed Client");
   const wonCount = wonLeads.length;
   
   // Parse budget values comfortably

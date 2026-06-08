@@ -451,7 +451,7 @@ export default function LeadPipeline({
           if (matchedSource) finalSource = matchedSource;
 
           // Match Status safely
-          const validStatuses = ['New Lead', 'Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate', 'Not Pick'];
+          const validStatuses = ['New Lead', 'Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate', 'Not Pick', 'Closed Client'];
           let finalStatus: any = "New Lead";
           const matchedStatus = validStatuses.find(s => s.toLowerCase() === rawStatusStr.toLowerCase() || s.toLowerCase().replace(/\s+/g, "") === rawStatusStr.toLowerCase().replace(/\s+/g, ""));
           if (matchedStatus) finalStatus = matchedStatus;
@@ -929,6 +929,8 @@ export default function LeadPipeline({
         return "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20";
       case "Not Interested":
         return "bg-rose-500/10 text-rose-455 border border-rose-500/25";
+      case "Closed Client":
+        return "bg-emerald-650/10 text-emerald-400 border border-emerald-500/25 font-semibold";
       case "Meeting Done":
         return "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
       case "Site Visit":
@@ -1126,6 +1128,7 @@ export default function LeadPipeline({
               <option value="Not Interested">Not Interested</option>
               <option value="Meeting Done">Meeting Done</option>
               <option value="Site Visit">Site Visit</option>
+              <option value="Closed Client">Closed Client</option>
               <option value="Call Back">Call Back</option>
               <option value="Junk">Junk</option>
               <option value="Duplicate">Duplicate</option>
@@ -1833,7 +1836,7 @@ export default function LeadPipeline({
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono tracking-wider uppercase font-semibold ${getStatusBadgeClass(lead.status)}`}>
                       {lead.status || "(Select Status)"}
                     </span>
-                    {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && (
+                    {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && lead.createdByUserRole !== "team_leader" && lead.createdByUserRole !== "sales_team" && (
                       <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
                         <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
                         {(() => {
@@ -2272,6 +2275,7 @@ export default function LeadPipeline({
                     <option value="Not Interested">Not Interested</option>
                     <option value="Meeting Done">Meeting Done</option>
                     <option value="Site Visit">Site Visit</option>
+                    <option value="Closed Client">Closed Client</option>
                     <option value="Call Back">Call Back</option>
                     <option value="Junk">Junk</option>
                     <option value="Duplicate">Duplicate</option>
@@ -2575,6 +2579,7 @@ export default function LeadPipeline({
                     <option value="Not Interested">Not Interested</option>
                     <option value="Meeting Done">Meeting Done</option>
                     <option value="Site Visit">Site Visit</option>
+                    <option value="Closed Client">Closed Client</option>
                     <option value="Call Back">Call Back</option>
                     <option value="Junk">Junk</option>
                     <option value="Duplicate">Duplicate</option>

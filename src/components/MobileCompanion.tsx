@@ -296,6 +296,7 @@ export default function MobileCompanion({
                           <option value="Detailed Share">🤝 Detailed Share</option>
                           <option value="Meeting Done">🎉 Meeting Done</option>
                           <option value="Site Visit">🏗️ Site Visit</option>
+                          <option value="Closed Client">💼 Closed Client</option>
                           <option value="Call Back">🔄 Call Back</option>
                           <option value="Not Interested">❌ Not Interested</option>
                           <option value="Not Pick">🔇 Not Pick</option>

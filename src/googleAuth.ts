@@ -318,6 +318,7 @@ export function mapSpreadsheetRowsToLeads(
       else if (parsedStatus.includes("follow")) status = "Follow Up";
       else if (parsedStatus.includes("share") || parsedStatus.includes("detail")) status = "Detailed Share";
       else if (parsedStatus.includes("not interested")) status = "Not Interested";
+      else if (parsedStatus.includes("closed client") || parsedStatus.includes("closed") || parsedStatus.includes("client closed")) status = "Closed Client";
       else if (parsedStatus.includes("meeting")) status = "Meeting Done";
       else if (parsedStatus.includes("visit") || parsedStatus.includes("site")) status = "Site Visit";
       else if (parsedStatus.includes("callback")) status = "Call Back";

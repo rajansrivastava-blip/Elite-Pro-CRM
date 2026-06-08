@@ -488,50 +488,34 @@ export default function App() {
     });
   };
 
-  // Persistence side effects
+  // Persistence side effects synced to local storage and server-side cache
   useEffect(() => {
     localStorage.setItem("elite_pro_leads", JSON.stringify(leads));
-    if (crmDataLoaded) {
-      fetch("/api/crm/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
-      }).catch(err => console.error("Server cache sync error:", err));
-    }
-  }, [leads, crmDataLoaded]);
-
-  useEffect(() => {
     localStorage.setItem("elite_pro_appointments", JSON.stringify(appointments));
-    if (crmDataLoaded) {
-      fetch("/api/crm/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
-      }).catch(err => console.error("Server cache sync error:", err));
-    }
-  }, [appointments, crmDataLoaded]);
-
-  useEffect(() => {
     localStorage.setItem("elite_pro_communication_logs", JSON.stringify(communicationLogs));
-    if (crmDataLoaded) {
-      fetch("/api/crm/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
-      }).catch(err => console.error("Server cache sync error:", err));
-    }
-  }, [communicationLogs, crmDataLoaded]);
-
-  useEffect(() => {
     localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(leadEditLogs));
+    localStorage.setItem("elite_pro_users", JSON.stringify(users));
+
     if (crmDataLoaded) {
-      fetch("/api/crm/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
-      }).catch(err => console.error("Server cache sync error:", err));
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        fetch("/api/crm/data", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs }),
+          signal: controller.signal
+        }).catch(err => {
+          if (err.name !== "AbortError") {
+            console.error("Server cache sync error:", err);
+          }
+        });
+      }, 500); // 500ms debounce to prevent concurrent parallel requests and "Load failed" errors
+      return () => {
+        clearTimeout(timer);
+        controller.abort();
+      };
     }
-  }, [leadEditLogs, crmDataLoaded]);
+  }, [leads, appointments, communicationLogs, leadEditLogs, users, crmDataLoaded]);
 
   useEffect(() => {
     localStorage.setItem("elite_pro_notifications", JSON.stringify(notifications));
@@ -549,17 +533,6 @@ export default function App() {
       localStorage.removeItem("elite_pro_current_user");
     }
   }, [currentUser]);
-
-  useEffect(() => {
-    localStorage.setItem("elite_pro_users", JSON.stringify(users));
-    if (crmDataLoaded) {
-      fetch("/api/crm/data", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs })
-      }).catch(err => console.error("Server cache sync error:", err));
-    }
-  }, [users, crmDataLoaded]);
 
   // Load initial CRM data cache from server on mount
   useEffect(() => {
@@ -769,6 +742,8 @@ export default function App() {
       assignmentTimestamp: nowTimestamp,
       lastActionTimestamp: nowTimestamp,
       assignedTlId: assignedUser ? assignedUser.id : undefined,
+      createdById: currentUser?.id,
+      createdByUserRole: currentUser?.role,
     };
     setLeads(prev => [item, ...prev]);
 
@@ -1209,6 +1184,11 @@ export default function App() {
 
       const updatedLeadsList = leads.map(lead => {
         if (lead.status !== "New Lead") return lead;
+        
+        // No lead transfer is applicable for leads registered by TL and Sales Team
+        if (lead.createdByUserRole === "team_leader" || lead.createdByUserRole === "sales_team") {
+          return lead;
+        }
         
         // Is currently assigned to a Team Leader or Sales Team user?
         const currentAgent = lead.assignedAgent;

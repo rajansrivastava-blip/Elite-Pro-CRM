@@ -141,10 +141,10 @@ export default function PerformanceDashboard({
   // Real-time computations from Leads state
   const totalLeadsCount = currentFilteredLeads.length;
   
-  const wonLeads = currentFilteredLeads.filter(l => l.status === "Meeting Done" || l.status === "Site Visit");
+  const wonLeads = currentFilteredLeads.filter(l => l.status === "Closed Client");
   const wonCount = wonLeads.length;
   
-  const activeLeads = currentFilteredLeads.filter(l => l.status !== "Meeting Done" && l.status !== "Site Visit" && l.status !== "Not Interested" && l.status !== "Junk" && l.status !== "Duplicate");
+  const activeLeads = currentFilteredLeads.filter(l => l.status !== "Closed Client" && l.status !== "Not Interested" && l.status !== "Junk" && l.status !== "Duplicate");
   
   // Calculate total pipeline value from active and won budgets
   const parseBudgetValue = (b: string): number => {
@@ -190,7 +190,7 @@ export default function PerformanceDashboard({
     new: currentFilteredLeads.filter(l => l.status === "New Lead" || l.status === "Interested" || l.status === "Follow Up").length,
     contacted: currentFilteredLeads.filter(l => l.status === "Call Back" || l.status === "Detailed Share").length,
     negotiating: currentFilteredLeads.filter(l => l.status === "Detailed Share").length,
-    won: currentFilteredLeads.filter(l => l.status === "Meeting Done" || l.status === "Site Visit").length,
+    won: currentFilteredLeads.filter(l => l.status === "Closed Client").length,
     lost: currentFilteredLeads.filter(l => l.status === "Not Interested" || l.status === "Junk" || l.status === "Duplicate").length,
   };
 
@@ -201,7 +201,7 @@ export default function PerformanceDashboard({
       acc[name] = { totalLeads: 0, dealsWon: 0, totalClosedVal: 0 };
     }
     acc[name].totalLeads += 1;
-    if (lead.status === "Meeting Done" || lead.status === "Site Visit") {
+    if (lead.status === "Closed Client") {
       acc[name].dealsWon += 1;
       acc[name].totalClosedVal += parseBudgetValue(lead.budget);
     }
@@ -277,7 +277,7 @@ export default function PerformanceDashboard({
         .filter(l => l.status !== "Not Interested" && l.status !== "Junk" && l.status !== "Duplicate")
         .reduce((sum, l) => sum + parseBudgetValue(l.budget), 0);
 
-      const groupWon = groupLeads.filter(l => l.status === "Meeting Done" || l.status === "Site Visit").length;
+      const groupWon = groupLeads.filter(l => l.status === "Closed Client").length;
 
       return {
         id: tl.id,

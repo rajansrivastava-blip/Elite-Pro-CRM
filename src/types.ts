@@ -35,7 +35,8 @@ export type LeadStatus =
   | 'Junk' 
   | 'Duplicate'
   | 'Not Pick'
-  | 'New Lead';
+  | 'New Lead'
+  | 'Closed Client';
 
 export type LeadTemperature = 'Hot' | 'Warm' | 'Cold' | 'Dead';
 
@@ -62,6 +63,8 @@ export interface Lead {
   assignedTlId?: string;
   lastActionTimestamp?: number;
   reassignedTimestamp?: number;
+  createdById?: string;
+  createdByUserRole?: string;
 }
 
 export type AppointmentType = 'meeting' | 'site_visit' | 'call' | 'followup';
