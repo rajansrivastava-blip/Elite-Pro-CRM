@@ -387,3 +387,79 @@ export function mapSpreadsheetRowsToLeads(
 
   return resultLeads;
 }
+
+export function isDuplicateLead(
+  newLead: { name: string; email?: string; phone?: string },
+  existingLeads: any[]
+): boolean {
+  const getDigits = (p?: string) => {
+    if (!p) return "";
+    const digits = p.replace(/\D/g, "");
+    if (digits.length === 12 && digits.startsWith("91")) {
+      return digits.substring(2);
+    }
+    if (digits.length === 11 && digits.startsWith("0")) {
+      return digits.substring(1);
+    }
+    return digits;
+  };
+
+  const getCleanEmail = (e?: string) => {
+    if (!e) return "";
+    const clean = e.toLowerCase().trim();
+    if (
+      clean === "n/a" ||
+      clean === "noemail" ||
+      clean === "not available" ||
+      clean === "none" ||
+      clean === "null" ||
+      clean.includes("example.com")
+    ) {
+      return "";
+    }
+    return clean;
+  };
+
+  const getCleanName = (n: string) => {
+    return (n || "").toLowerCase().replace(/\s+/g, " ").trim();
+  };
+
+  const nlName = getCleanName(newLead.name);
+  const nlEmail = getCleanEmail(newLead.email);
+  const nlPhone = getDigits(newLead.phone);
+
+  if (!nlName) return true; // skip incomplete record
+
+  return existingLeads.some(l => {
+    const lName = getCleanName(l.name);
+    const lEmail = getCleanEmail(l.email);
+    const lPhone = getDigits(l.phone);
+
+    // 1. If valid phone numbers match, they are duplicates
+    if (nlPhone && lPhone && nlPhone.length >= 7 && lPhone.length >= 7) {
+      if (nlPhone === lPhone || nlPhone.endsWith(lPhone) || lPhone.endsWith(nlPhone)) {
+        return true;
+      }
+    }
+
+    // 2. If valid emails match, they are duplicates
+    if (nlEmail && lEmail) {
+      if (nlEmail === lEmail) {
+        return true;
+      }
+    }
+
+    // 3. Name-based matching:
+    if (nlName === lName) {
+      const nlHasContact = !!(nlEmail || (nlPhone && nlPhone.length >= 7));
+      const lHasContact = !!(lEmail || (lPhone && lPhone.length >= 7));
+      
+      if (!nlHasContact || !lHasContact) {
+        return true;
+      }
+    }
+
+    return false;
+  });
+}
+

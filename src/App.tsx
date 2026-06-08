@@ -45,6 +45,7 @@ import {
   Share2
 } from "lucide-react";
 import { motion } from "motion/react";
+import { isDuplicateLead } from "./googleAuth";
 
 export default function App() {
   // Authentication State
@@ -298,10 +299,14 @@ export default function App() {
         const res = await pullSupabaseData();
         if (res.leads && res.leads.length > 0) {
           setLeads(prev => {
-            const merged = [...res.leads!];
+            const merged: Lead[] = [];
+            res.leads!.forEach(l => {
+              if (!isDuplicateLead(l, merged)) {
+                merged.push(l);
+              }
+            });
             prev.forEach(localLead => {
-              const exists = merged.some(l => l.id === localLead.id);
-              if (!exists) {
+              if (!isDuplicateLead(localLead, merged)) {
                 merged.push(localLead);
               }
             });
@@ -399,7 +404,13 @@ export default function App() {
     let success = res.errors.length === 0;
     if (success) {
       if (res.leads && res.leads.length > 0) {
-        setLeads(res.leads);
+        const uniquePulled: Lead[] = [];
+        res.leads.forEach(l => {
+          if (!isDuplicateLead(l, uniquePulled)) {
+            uniquePulled.push(l);
+          }
+        });
+        setLeads(uniquePulled);
       }
       if (res.users && res.users.length > 0) {
         setUsers(prev => {
@@ -861,11 +872,26 @@ export default function App() {
     const tomorrowStr = tomorrow.toISOString().split("T")[0];
     const nowTimestamp = Date.now();
 
+    // Secondary deep verification filters for absolute duplicate safety
+    const uniqueNewLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] = [];
+    newLeads.forEach(nl => {
+      const isDupInCrm = isDuplicateLead(nl, leads);
+      const isDupInBatch = isDuplicateLead(nl, uniqueNewLeads);
+      if (!isDupInCrm && !isDupInBatch) {
+        uniqueNewLeads.push(nl);
+      }
+    });
+
+    if (uniqueNewLeads.length === 0) {
+      console.log("[Bulk Add Leads] All imported leads matched existing contacts; bypassing registration.");
+      return;
+    }
+
     const newItems: Lead[] = [];
     const newAppts: Appointment[] = [];
     
     // Create batch lists to execute
-    newLeads.forEach((nl, index) => {
+    uniqueNewLeads.forEach((nl, index) => {
       const id = "lead-bulk-" + (leads.length + index + 1) + "-" + Math.random().toString(36).substr(2, 4);
       
       const assignedUser = users.find(u => u.name.toLowerCase() === nl.assignedAgent?.toLowerCase());
@@ -939,7 +965,7 @@ export default function App() {
         console.warn("Supabase bulk registration failed:", sampleErr);
         triggerAlert(
           "Supabase Bulk Sync Alert",
-          `Successfully added ${newLeads.length} leads to local browser state, but failed to write onto your remote Supabase database.\n\nDatabase Error: "${sampleErr}"\n\nPlease ensure your 'leads' and 'appointments' tables are properly configured under Supabase's SQL Editor schema (details located inside the Integrations "System Sync" page).`
+          `Successfully added ${uniqueNewLeads.length} leads to local browser state, but failed to write onto your remote Supabase database.\n\nDatabase Error: "${sampleErr}"\n\nPlease ensure your 'leads' and 'appointments' tables are properly configured under Supabase's SQL Editor schema (details located inside the Integrations "System Sync" page).`
         );
       }
     }
@@ -997,24 +1023,13 @@ export default function App() {
 
       if (isAuto && sheetUrlVal) {
         try {
-          const { fetchGoogleSheetValues, mapSpreadsheetRowsToLeads } = await import("./googleAuth");
+          const { fetchGoogleSheetValues, mapSpreadsheetRowsToLeads, isDuplicateLead } = await import("./googleAuth");
           const rows = await fetchGoogleSheetValues(sheetUrlVal, sheetRangeVal, token);
           if (rows && rows.length >= 2) {
             const parsedLeads = mapSpreadsheetRowsToLeads(rows, usersRef.current || []);
             if (parsedLeads.length > 0) {
-              const existingLeadsSet = new Set(
-                leadsRef.current.map(l => {
-                  const name = (l.name || "").toLowerCase().trim();
-                  const email = (l.email || "").toLowerCase().trim();
-                  return email ? `${name}::${email}` : name;
-                })
-              );
-
               const filteredNewLeads = parsedLeads.filter(nl => {
-                const name = (nl.name || "").toLowerCase().trim();
-                const email = (nl.email || "").toLowerCase().trim();
-                const key = email ? `${name}::${email}` : name;
-                return !existingLeadsSet.has(key);
+                return !isDuplicateLead(nl, leadsRef.current || []);
               });
 
               if (filteredNewLeads.length > 0) {

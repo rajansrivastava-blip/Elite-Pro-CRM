@@ -37,7 +37,8 @@ import {
   fetchGoogleSheetValues, 
   mapSpreadsheetRowsToLeads,
   initGoogleAuth,
-  extractSpreadsheetId 
+  extractSpreadsheetId,
+  isDuplicateLead
 } from "../googleAuth";
 
 import { User } from "../types";
@@ -378,20 +379,9 @@ export default function SystemSync({
         return;
       }
 
-      // 3. Prevent Duplicates with existing leads
-      const existingLeadsSet = new Set(
-        leads.map(l => {
-          const name = (l.name || "").toLowerCase().trim();
-          const email = (l.email || "").toLowerCase().trim();
-          return email ? `${name}::${email}` : name;
-        })
-      );
-
+      // 3. Prevent Duplicates with existing leads using robust multi-field identification
       const filteredNewLeads = parsedLeads.filter(nl => {
-        const name = (nl.name || "").toLowerCase().trim();
-        const email = (nl.email || "").toLowerCase().trim();
-        const key = email ? `${name}::${email}` : name;
-        return !existingLeadsSet.has(key);
+        return !isDuplicateLead(nl, leads);
       });
 
       // 4. Register new leads
