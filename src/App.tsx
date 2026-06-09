@@ -70,7 +70,8 @@ export default function App() {
   // Application State
   const [leads, setLeads] = useState<Lead[]>(() => {
     const saved = localStorage.getItem("elite_pro_leads");
-    const rawLeads = saved ? JSON.parse(saved) : INITIAL_LEADS;
+    const isSyncActive = localStorage.getItem("elite_pro_auto_sync") !== "false";
+    const rawLeads = saved ? JSON.parse(saved) : (isSyncActive ? [] : INITIAL_LEADS);
     // Walk through and scrub any auto-transferred text from the notes field so it is kept clean and pristine
     return rawLeads.map((l: Lead) => {
       if (l.notes && (l.notes.includes("[System Auto-Transfer]") || l.notes.includes("System Auto-Transfer"))) {
@@ -87,12 +88,14 @@ export default function App() {
 
   const [appointments, setAppointments] = useState<Appointment[]>(() => {
     const saved = localStorage.getItem("elite_pro_appointments");
-    return saved ? JSON.parse(saved) : INITIAL_APPOINTMENTS;
+    const isSyncActive = localStorage.getItem("elite_pro_auto_sync") !== "false";
+    return saved ? JSON.parse(saved) : (isSyncActive ? [] : INITIAL_APPOINTMENTS);
   });
 
   const [communicationLogs, setCommunicationLogs] = useState<CommunicationLog[]>(() => {
     const saved = localStorage.getItem("elite_pro_communication_logs");
-    return saved ? JSON.parse(saved) : INITIAL_COMMUNICATION_LOGS;
+    const isSyncActive = localStorage.getItem("elite_pro_auto_sync") !== "false";
+    return saved ? JSON.parse(saved) : (isSyncActive ? [] : INITIAL_COMMUNICATION_LOGS);
   });
 
   const [leadEditLogs, setLeadEditLogs] = useState<LeadEditLog[]>(() => {
@@ -466,67 +469,74 @@ export default function App() {
         const status = await refreshSupabaseStatus();
 
         // 2. If Supabase is connected and auto-sync is enabled, use live Supabase data as absolute truth
-        if (isAutoSyncEnabled && status.isConnected && status.tablesVerified.leads && status.tablesVerified.users) {
+        if (isAutoSyncEnabled && status.isConnected) {
           console.log("[init] Live Supabase detected. Loading clean DB tables.");
           const res = await pullSupabaseData();
-          if (res.errors.length === 0) {
-            const pulledLeads = res.leads || [];
-            const pulledUsers = res.users || [];
-            const pulledApps = res.appointments || [];
-            const pulledComms = res.communicationLogs || [];
-            const pulledEdits = res.leadEditLogs || [];
+          
+          // Even if some secondary tables or logs have errors (e.g. table cleared, or relation error),
+          // we want to use whatever database rows are actually present in Supabase rather than falling back
+          // to default mock records from crm_data_cache.json or crm presets.
+          const pulledLeads = res.leads || [];
+          const pulledUsers = res.users || [];
+          const pulledApps = res.appointments || [];
+          const pulledComms = res.communicationLogs || [];
+          const pulledEdits = res.leadEditLogs || [];
 
-            setLeads(pulledLeads);
-            
-            // Merge users softly to preserve mock session details or local password overrides
-            setUsers(prev => {
-              const merged = [...pulledUsers];
-              prev.forEach(lu => {
-                const matchedIdx = merged.findIndex(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase());
-                if (matchedIdx >= 0) {
-                  if (!merged[matchedIdx].password && lu.password) {
-                    merged[matchedIdx].password = lu.password;
-                  }
-                } else {
-                  merged.push(lu);
+          setLeads(pulledLeads);
+          
+          // Merge users safely to preserve mock session details or local password overrides
+          setUsers(prev => {
+            const merged = [...pulledUsers];
+            prev.forEach(lu => {
+              const matchedIdx = merged.findIndex(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase());
+              if (matchedIdx >= 0) {
+                if (!merged[matchedIdx].password && lu.password) {
+                  merged[matchedIdx].password = lu.password;
                 }
-              });
-              return merged;
+              } else {
+                merged.push(lu);
+              }
             });
+            return merged;
+          });
 
-            setAppointments(pulledApps);
-            setCommunicationLogs(pulledComms);
-            setLeadEditLogs(pulledEdits);
+          setAppointments(pulledApps);
+          setCommunicationLogs(pulledComms);
+          setLeadEditLogs(pulledEdits);
 
-            // Sync with local storage
-            localStorage.setItem("elite_pro_leads", JSON.stringify(pulledLeads));
-            localStorage.setItem("elite_pro_appointments", JSON.stringify(pulledApps));
-            localStorage.setItem("elite_pro_communication_logs", JSON.stringify(pulledComms));
-            localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(pulledEdits));
+          // Sync with local storage
+          localStorage.setItem("elite_pro_leads", JSON.stringify(pulledLeads));
+          localStorage.setItem("elite_pro_appointments", JSON.stringify(pulledApps));
+          localStorage.setItem("elite_pro_communication_logs", JSON.stringify(pulledComms));
+          localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(pulledEdits));
 
-            // Populate the server cache so it is immediately in sync with manual DB removals
-            await fetch("/api/crm/data", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                leads: pulledLeads,
-                users: pulledUsers,
-                appointments: pulledApps,
-                communicationLogs: pulledComms,
-                leadEditLogs: pulledEdits
-              })
-            });
+          // Populate the server cache so it is immediately in sync with manual DB removals/clears
+          await fetch("/api/crm/data", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              leads: pulledLeads,
+              users: pulledUsers,
+              appointments: pulledApps,
+              communicationLogs: pulledComms,
+              leadEditLogs: pulledEdits
+            })
+          });
 
+          if (res.errors.length === 0) {
             setSyncHistory(prev => [
               `${new Date().toISOString().replace("T", " ").substr(0, 19)} GMT - Hydrated from Supabase Cloud Cluster successfully.`,
               ...prev
             ]);
-            
-            setCrmDataLoaded(true);
-            return;
           } else {
-            console.warn("[init] Supabase pull failed. Falling back to local filesystem cache:", res.errors);
+            setSyncHistory(prev => [
+              `${new Date().toISOString().replace("T", " ").substr(0, 19)} GMT - Unified with Supabase live state (with warnings: ${res.errors.join(", ")}).`,
+              ...prev
+            ]);
           }
+          
+          setCrmDataLoaded(true);
+          return; // Strictly exit to prevent executing the file-based crm_data_cache.json fallback!
         }
 
         // 3. Fallback: Load initialization from local filesystem crm cache file
