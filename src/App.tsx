@@ -291,88 +291,9 @@ export default function App() {
     }
   };
 
-  // Check Supabase and load live data on mount (conditional on Auto-Sync)
+  // Check Supabase status on mount
   useEffect(() => {
-    const initSupabase = async () => {
-      const status = await refreshSupabaseStatus();
-      if (isAutoSyncEnabled && status.isConnected && status.tablesVerified.leads && status.tablesVerified.users) {
-        const res = await pullSupabaseData();
-        if (res.leads && res.leads.length > 0) {
-          setLeads(prev => {
-            const merged: Lead[] = [];
-            res.leads!.forEach(l => {
-              if (!isDuplicateLead(l, merged)) {
-                merged.push(l);
-              }
-            });
-            prev.forEach(localLead => {
-              if (!isDuplicateLead(localLead, merged)) {
-                merged.push(localLead);
-              }
-            });
-            return merged;
-          });
-        }
-        if (res.users && res.users.length > 0) {
-          setUsers(prev => {
-            const merged = [...res.users!];
-            prev.forEach(localUser => {
-              const matchedIdx = merged.findIndex(u => u.id === localUser.id || u.email.toLowerCase() === localUser.email.toLowerCase());
-              if (matchedIdx >= 0) {
-                if (!merged[matchedIdx].password && localUser.password) {
-                  merged[matchedIdx].password = localUser.password;
-                }
-              } else {
-                merged.push(localUser);
-              }
-            });
-            return merged;
-          });
-        }
-        if (res.appointments) {
-          setAppointments(prev => {
-            const merged = [...res.appointments!];
-            prev.forEach(localApp => {
-              const exists = merged.some(a => a.id === localApp.id);
-              if (!exists) {
-                merged.push(localApp);
-              }
-            });
-            return merged;
-          });
-        }
-        if (res.communicationLogs) {
-          setCommunicationLogs(prev => {
-            const merged = [...res.communicationLogs!];
-            prev.forEach(localLog => {
-              const exists = merged.some(c => c.id === localLog.id);
-              if (!exists) {
-                merged.push(localLog);
-              }
-            });
-            return merged;
-          });
-        }
-        if (res.leadEditLogs) {
-          setLeadEditLogs(prev => {
-            const merged = [...res.leadEditLogs!];
-            prev.forEach(localLog => {
-              const exists = merged.some(e => e.id === localLog.id);
-              if (!exists) {
-                merged.push(localLog);
-              }
-            });
-            return merged;
-          });
-        }
-        
-        setSyncHistory(prev => [
-          `${new Date().toISOString().replace("T", " ").substr(0, 19)} GMT - Hydrated from Supabase Cloud Cluster successfully with local overrides.`,
-          ...prev
-        ]);
-      }
-    };
-    initSupabase();
+    refreshSupabaseStatus();
   }, []);
 
   const handlePushToSupabase = async () => {
@@ -403,7 +324,7 @@ export default function App() {
 
     let success = res.errors.length === 0;
     if (success) {
-      if (res.leads && res.leads.length > 0) {
+      if (res.leads) {
         const uniquePulled: Lead[] = [];
         res.leads.forEach(l => {
           if (!isDuplicateLead(l, uniquePulled)) {
@@ -412,7 +333,7 @@ export default function App() {
         });
         setLeads(uniquePulled);
       }
-      if (res.users && res.users.length > 0) {
+      if (res.users) {
         setUsers(prev => {
           const merged = [...res.users!];
           prev.forEach(localUser => {
@@ -428,13 +349,13 @@ export default function App() {
           return merged;
         });
       }
-      if (res.appointments && res.appointments.length > 0) {
+      if (res.appointments) {
         setAppointments(res.appointments);
       }
-      if (res.communicationLogs && res.communicationLogs.length > 0) {
+      if (res.communicationLogs) {
         setCommunicationLogs(res.communicationLogs);
       }
-      if (res.leadEditLogs && res.leadEditLogs.length > 0) {
+      if (res.leadEditLogs) {
         setLeadEditLogs(res.leadEditLogs);
       }
 
@@ -552,9 +473,9 @@ export default function App() {
     }
   }, [currentUser]);
 
-  // Load initial CRM data cache from server on mount
+  // Load initial CRM data on mount (Sequential sequence with Supabase authority)
   useEffect(() => {
-    const fetchCrmData = async () => {
+    const initializeCrmAndSync = async () => {
       try {
         // One-time client clean slate setup to match only-data-storage directive
         if (!localStorage.getItem("elite_pro_sterile_reset_v2")) {
@@ -570,22 +491,103 @@ export default function App() {
           setLeadEditLogs([]);
         }
 
+        // 1. Refresh Supabase connection and tables state
+        const status = await refreshSupabaseStatus();
+
+        // 2. If Supabase is connected and auto-sync is enabled, use live Supabase data as absolute truth
+        if (isAutoSyncEnabled && status.isConnected && status.tablesVerified.leads && status.tablesVerified.users) {
+          console.log("[init] Live Supabase detected. Loading clean DB tables.");
+          const res = await pullSupabaseData();
+          if (res.errors.length === 0) {
+            const pulledLeads = res.leads || [];
+            const pulledUsers = res.users || [];
+            const pulledApps = res.appointments || [];
+            const pulledComms = res.communicationLogs || [];
+            const pulledEdits = res.leadEditLogs || [];
+
+            setLeads(pulledLeads);
+            
+            // Merge users softly to preserve mock session details or local password overrides
+            setUsers(prev => {
+              const merged = [...pulledUsers];
+              prev.forEach(lu => {
+                const matchedIdx = merged.findIndex(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase());
+                if (matchedIdx >= 0) {
+                  if (!merged[matchedIdx].password && lu.password) {
+                    merged[matchedIdx].password = lu.password;
+                  }
+                } else {
+                  merged.push(lu);
+                }
+              });
+              return merged;
+            });
+
+            setAppointments(pulledApps);
+            setCommunicationLogs(pulledComms);
+            setLeadEditLogs(pulledEdits);
+
+            // Sync with local storage
+            localStorage.setItem("elite_pro_leads", JSON.stringify(pulledLeads));
+            localStorage.setItem("elite_pro_appointments", JSON.stringify(pulledApps));
+            localStorage.setItem("elite_pro_communication_logs", JSON.stringify(pulledComms));
+            localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(pulledEdits));
+
+            // Populate the server cache so it is immediately in sync with manual DB removals
+            await fetch("/api/crm/data", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                leads: pulledLeads,
+                users: pulledUsers,
+                appointments: pulledApps,
+                communicationLogs: pulledComms,
+                leadEditLogs: pulledEdits
+              })
+            });
+
+            setSyncHistory(prev => [
+              `${new Date().toISOString().replace("T", " ").substr(0, 19)} GMT - Hydrated from Supabase Cloud Cluster successfully.`,
+              ...prev
+            ]);
+            
+            setCrmDataLoaded(true);
+            return;
+          } else {
+            console.warn("[init] Supabase pull failed. Falling back to local filesystem cache:", res.errors);
+          }
+        }
+
+        // 3. Fallback: Load initialization from local filesystem crm cache file
         const res = await fetch("/api/crm/data");
         const data = await res.json();
-        if (data && data.leads && data.leads.length > 0) {
-          setLeads(data.leads);
-          if (data.users && data.users.length > 0) setUsers(data.users);
-          if (data.appointments) setAppointments(data.appointments);
-          if (data.communicationLogs) setCommunicationLogs(data.communicationLogs);
-          if (data.leadEditLogs) setLeadEditLogs(data.leadEditLogs);
+        if (data && data.leads) {
+          const loadedLeads = data.leads || [];
+          const loadedUsers = data.users || [];
+          const loadedApps = data.appointments || [];
+          const loadedComms = data.communicationLogs || [];
+          const loadedEdits = data.leadEditLogs || [];
+
+          setLeads(loadedLeads);
+          setUsers(prev => {
+            const merged = [...loadedUsers];
+            prev.forEach(lu => {
+              if (!merged.some(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase())) {
+                merged.push(lu);
+              }
+            });
+            return merged;
+          });
+          setAppointments(loadedApps);
+          setCommunicationLogs(loadedComms);
+          setLeadEditLogs(loadedEdits);
           
-          localStorage.setItem("elite_pro_leads", JSON.stringify(data.leads));
-          if (data.users) localStorage.setItem("elite_pro_users", JSON.stringify(data.users));
-          if (data.appointments) localStorage.setItem("elite_pro_appointments", JSON.stringify(data.appointments));
-          if (data.communicationLogs) localStorage.setItem("elite_pro_communication_logs", JSON.stringify(data.communicationLogs));
-          if (data.leadEditLogs) localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(data.leadEditLogs));
+          localStorage.setItem("elite_pro_leads", JSON.stringify(loadedLeads));
+          localStorage.setItem("elite_pro_appointments", JSON.stringify(loadedApps));
+          localStorage.setItem("elite_pro_communication_logs", JSON.stringify(loadedComms));
+          localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(loadedEdits));
         } else {
-          // Empty server cache or first run. Seed current client-side state (which is empty) to server cache immediately.
+          // Zero slate initialization
           const localLeads = localStorage.getItem("elite_pro_leads");
           const localUsers = localStorage.getItem("elite_pro_users");
           const localApps = localStorage.getItem("elite_pro_appointments");
@@ -621,7 +623,7 @@ export default function App() {
         setCrmDataLoaded(true);
       }
     };
-    fetchCrmData();
+    initializeCrmAndSync();
   }, []);
 
 
