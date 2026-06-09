@@ -1842,7 +1842,7 @@ export default function LeadPipeline({
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono tracking-wider uppercase font-semibold ${getStatusBadgeClass(lead.status)}`}>
                       {lead.status || "(Select Status)"}
                     </span>
-                    {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && lead.createdByUserRole !== "team_leader" && lead.createdByUserRole !== "sales_team" && (
+                    {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && (
                       <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
                         <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
                         {(() => {
@@ -2007,7 +2007,14 @@ export default function LeadPipeline({
           ))
         ) : (
           <div className="py-12 text-center text-slate-400 lg:col-span-2">
-            No matches found. Clear filters or add a fresh real estate client.
+            {currentUser?.role === "sales_team" || currentUser?.role === "team_leader" ? (
+              <div className="flex flex-col items-center justify-center gap-1.5">
+                <span className="text-sm font-semibold tracking-wide uppercase font-mono text-slate-500">No lead assigned.</span>
+                <p className="text-[11px] text-slate-450 max-w-xs">There are currently no real estate clients assigned to you or your direct report cohort matching these parameters.</p>
+              </div>
+            ) : (
+              "No matches found. Clear filters or add a fresh real estate client."
+            )}
           </div>
         )}
       </div>

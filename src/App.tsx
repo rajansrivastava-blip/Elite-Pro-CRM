@@ -778,7 +778,8 @@ export default function App() {
       setNotifications(prev => [newNotif, ...prev]);
 
       // Automatically pop up notification dispatcher if assigned user is found and has a phone
-      if (assignedUser) {
+      // Display only to Admin and Super Admin roles, not Sales Team and TLs
+      if (assignedUser && (currentUser?.role === "super_admin" || currentUser?.role === "admin")) {
         const textMessage = `*ELITE PRO INFRA ADVISORY ALERT*\n\n` +
           `Hello *${assignedUser.name}*,\n` +
           `You have been assigned a new Client Lead!\n\n` +
@@ -1208,10 +1209,6 @@ export default function App() {
 
         // 1) Rule A: Existing 30-minute idle auto-transfer rule for "New Lead" status
         if (lead.status === "New Lead") {
-          // No lead transfer is applicable for leads registered by TL and Sales Team
-          if (lead.createdByUserRole === "team_leader" || lead.createdByUserRole === "sales_team") {
-            return lead;
-          }
           if (!currentAssignee) return lead; // not currently assigned to a TL or Sales Team agent
 
           // Ensure current occupant of the lead is on the allowed list to trigger auto-transfer
@@ -1515,7 +1512,8 @@ export default function App() {
         setNotifications(prev => [newNotif, ...prev]);
 
         // Auto notification dispatch window on reassignment
-        if (newAssignee) {
+        // Only trigger for Admin or Super Admin
+        if (newAssignee && (currentUser?.role === "super_admin" || currentUser?.role === "admin")) {
           const textMessage = `*ELITE PRO INFRA ADVISORY ALERT*\n\n` +
             `Hello *${newAssignee.name}*,\n` +
             `You have been assigned a new Client Lead!\n\n` +

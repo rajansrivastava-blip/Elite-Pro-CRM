@@ -338,8 +338,15 @@ export default function MobileCompanion({
                     </form>
                   </>
                 ) : (
-                  <div className="py-20 text-center text-slate-450 text-[11px]">
-                    No leads available in registry context.
+                  <div className="py-20 text-center text-slate-450 text-[11px] flex flex-col items-center justify-center gap-1">
+                    {currentUser?.role === "sales_team" || currentUser?.role === "team_leader" ? (
+                      <>
+                        <span className="font-semibold uppercase tracking-wider font-mono text-amber-500/80">No lead assigned.</span>
+                        <p className="text-[10px] text-slate-500 max-w-[180px] leading-normal mt-1">Please wait for admin or round-robin auto-transfers to route leads to your workspace.</p>
+                      </>
+                    ) : (
+                      "No leads available in registry context."
+                    )}
                   </div>
                 )}
               </div>
