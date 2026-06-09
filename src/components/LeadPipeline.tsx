@@ -39,11 +39,13 @@ interface LeadPipelineProps {
   onBulkAddLeads?: (leads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[]) => void;
   onUpdateLead: (lead: Lead) => void;
   onDeleteLead: (id: string) => void;
+  onBulkDeleteLeads?: (ids: string[]) => void;
   communicationLogs: CommunicationLog[];
   onAddCommunicationLog: (log: Omit<CommunicationLog, "id">) => void;
   darkMode: boolean;
   currentUser?: User | null;
   leadEditLogs?: LeadEditLog[];
+  onClearLeadEditLogs?: (type: "transfer" | "edit" | "all") => void;
 }
 
 export default function LeadPipeline({
@@ -53,11 +55,13 @@ export default function LeadPipeline({
   onBulkAddLeads,
   onUpdateLead,
   onDeleteLead,
+  onBulkDeleteLeads,
   communicationLogs,
   onAddCommunicationLog,
   darkMode,
   currentUser,
-  leadEditLogs = []
+  leadEditLogs = [],
+  onClearLeadEditLogs
 }: LeadPipelineProps) {
   const isSalesOrTL = currentUser?.role === "sales_team" || currentUser?.role === "team_leader";
 
@@ -175,6 +179,7 @@ export default function LeadPipeline({
   const [showLogs, setShowLogs] = useState(false);
   const [showTransferLogs, setShowTransferLogs] = useState(false);
   const [copiedTransfers, setCopiedTransfers] = useState(false);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
 
   const getDisplayNotes = (notesStr: string) => {
     if (!notesStr) return "";
@@ -1591,9 +1596,25 @@ export default function LeadPipeline({
                   : `Auditing trail of parameter modifications captured for standard advisor profile [${currentUser?.name}]`}
               </p>
             </div>
-            <span className="px-2.5 py-1 text-xs font-mono font-bold uppercase rounded-lg bg-amber-500/15 text-amber-500 border border-amber-500/25">
-              Secure Auditing: Active
-            </span>
+            <div className="flex items-center gap-3">
+              {onClearLeadEditLogs && (leadEditLogs.filter(log => log.editorName !== "System Auto-Transfer Agent" && log.editorName !== "System Auto-Reassigner").length > 0) && (
+                <button
+                  type="button"
+                  id="clear-edit-logs-history-btn"
+                  onClick={() => {
+                    if (window.confirm("Are you sure you want to clear your Sales Advisor Revision history logs?")) {
+                      onClearLeadEditLogs("edit");
+                    }
+                  }}
+                  className="px-3 py-1 text-[11px] font-sans font-bold uppercase tracking-wider rounded-lg border border-rose-500/25 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 cursor-pointer transition active:scale-95"
+                >
+                  Clear History Logs
+                </button>
+              )}
+              <span className="px-2.5 py-1 text-xs font-mono font-bold uppercase rounded-lg bg-amber-500/15 text-amber-500 border border-amber-500/25">
+                Secure Auditing: Active
+              </span>
+            </div>
           </div>
 
           {leadEditLogs.length > 0 ? (
@@ -1676,9 +1697,25 @@ export default function LeadPipeline({
                 Real-time security auditing trail of auto-generated reassignments due to 5-minute inactivity rules
               </p>
             </div>
-            <span className="px-2.5 py-1 text-xs font-mono font-bold uppercase rounded-lg bg-rose-500/15 text-rose-500 border border-rose-500/25">
-              Secure System Logs
-            </span>
+            <div className="flex items-center gap-3">
+              {onClearLeadEditLogs && (leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner").length > 0) && (
+                <button
+                  type="button"
+                  id="clear-auto-transfer-logs-btn"
+                  onClick={() => {
+                    if (window.confirm("Are you sure you want to clear your Lead Auto-Transfer logs?")) {
+                      onClearLeadEditLogs("transfer");
+                    }
+                  }}
+                  className="px-3 py-1 text-[11px] font-sans font-bold uppercase tracking-wider rounded-lg border border-rose-500/25 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 cursor-pointer transition active:scale-95"
+                >
+                  Clear Auto-Transfer Logs
+                </button>
+              )}
+              <span className="px-2.5 py-1 text-xs font-mono font-bold uppercase rounded-lg bg-rose-500/15 text-rose-500 border border-rose-500/25">
+                Secure System Logs
+              </span>
+            </div>
           </div>
 
           {/* Consolidated Copyable Text Area Console */}
@@ -1801,9 +1838,65 @@ export default function LeadPipeline({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          {filteredLeads.length > 0 ? (
-          filteredLeads.map((lead) => (
+        <div className="space-y-5">
+          {/* Bulk Selection Box */}
+          {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") && (
+            <div className={`p-4 rounded-xl border flex flex-col md:flex-row items-center justify-between gap-4 text-xs transition-all duration-155
+              ${darkMode ? "bg-slate-950/60 border-slate-800" : "bg-slate-50 border-slate-200"}`}
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="bulk-select-all-checkbox"
+                  className="w-4 h-4 rounded border-slate-350 text-teal-600 focus:ring-teal-500 cursor-pointer"
+                  checked={filteredLeads.length > 0 && selectedLeadIds.length === filteredLeads.length}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelectedLeadIds(filteredLeads.map(l => l.id));
+                    } else {
+                      setSelectedLeadIds([]);
+                    }
+                  }}
+                />
+                <label htmlFor="bulk-select-all-checkbox" className="font-semibold cursor-pointer select-none">
+                  Select All {filteredLeads.length} Filtered Leads ({selectedLeadIds.length} selected)
+                </label>
+              </div>
+
+              {selectedLeadIds.length > 0 && (
+                <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                  <button
+                    type="button"
+                    id="bulk-delete-leads-btn"
+                    onClick={() => {
+                      if (onBulkDeleteLeads) {
+                        onBulkDeleteLeads(selectedLeadIds);
+                        setSelectedLeadIds([]);
+                      } else {
+                        selectedLeadIds.forEach(id => onDeleteLead(id));
+                        setSelectedLeadIds([]);
+                      }
+                    }}
+                    className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 cursor-pointer transition flex items-center gap-1.5 active:scale-95"
+                  >
+                    <Trash2 size={13} className="text-rose-500" />
+                    Bulk Delete Selected ({selectedLeadIds.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLeadIds([])}
+                    className="px-3 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border border-slate-200/5 hover:bg-slate-800 text-slate-400 cursor-pointer transition active:scale-95"
+                  >
+                    Clear Selection
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {filteredLeads.length > 0 ? (
+            filteredLeads.map((lead) => (
             <div 
               key={lead.id}
               id={`lead-card-${lead.id}`}
@@ -1816,47 +1909,64 @@ export default function LeadPipeline({
               {/* Top Row: Lead Header and Score */}
               <div>
                 <div className="flex justify-between items-start">
-                  <div>
-                    {lead.company && (
-                      <span className="text-[10px] font-mono tracking-wider text-slate-400 font-semibold uppercase">
-                        {lead.company}
-                      </span>
+                  <div className="flex items-start gap-3 flex-1 min-w-0">
+                    {currentUser && (currentUser.role === "super_admin" || currentUser.role === "admin") && (
+                      <input
+                        type="checkbox"
+                        onClick={(e) => e.stopPropagation()}
+                        checked={selectedLeadIds.includes(lead.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedLeadIds(prev => [...prev, lead.id]);
+                          } else {
+                            setSelectedLeadIds(prev => prev.filter(id => id !== lead.id));
+                          }
+                        }}
+                        className="mt-1 w-4 h-4 rounded border-slate-350 text-teal-600 focus:ring-teal-500 cursor-pointer flex-shrink-0"
+                      />
                     )}
-                    <h4 className="font-display font-bold text-lg leading-tight mt-0.5 group-hover:text-teal-500 transition duration-150 flex flex-wrap items-center gap-2">
-                      <span>{lead.name}</span>
-                      {lead.projectName && (
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20 font-medium">
-                          {lead.projectName}
+                    <div className="flex-1 min-w-0">
+                      {lead.company && (
+                        <span className="text-[10px] font-mono tracking-wider text-slate-400 font-semibold uppercase">
+                          {lead.company}
                         </span>
                       )}
-                    </h4>
-                    <p className={`text-xs mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
-                      <span>{lead.position || "Private Client"}</span>
-                      <span className="text-slate-500 font-light">|</span>
-                      <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
-                      {(() => {
-                        const waHref = getAgentWhatsAppHref(lead.assignedAgent, lead);
-                        if (!waHref) return null;
-                        return (
-                          <a 
-                            href={waHref}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            title={`Instant Direct Message / WhatsApp Alert to ${lead.assignedAgent}`}
-                            className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors"
-                          >
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
-                            💬 Notify WA
-                          </a>
-                        );
-                      })()}
-                      {isDuplicatePhone(lead.phone, lead.id) && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-450 border border-rose-500/20 text-[9px] font-medium font-sans animate-pulse">
-                          <AlertCircle size={10} />
-                          Duplicate Number
-                        </span>
-                      )}
-                    </p>
+                      <h4 className="font-display font-bold text-lg leading-tight mt-0.5 group-hover:text-teal-500 transition duration-150 flex flex-wrap items-center gap-2">
+                        <span>{lead.name}</span>
+                        {lead.projectName && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-teal-500/10 text-teal-400 border border-teal-500/20 font-medium">
+                            {lead.projectName}
+                          </span>
+                        )}
+                      </h4>
+                      <p className={`text-xs mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 ${darkMode ? "text-slate-300" : "text-slate-650"}`}>
+                        <span>{lead.position || "Private Client"}</span>
+                        <span className="text-slate-500 font-light">|</span>
+                        <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
+                        {(() => {
+                          const waHref = getAgentWhatsAppHref(lead.assignedAgent, lead);
+                          if (!waHref) return null;
+                          return (
+                            <a 
+                              href={waHref}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title={`Instant Direct Message / WhatsApp Alert to ${lead.assignedAgent}`}
+                              className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 transition-colors"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block"></span>
+                              💬 Notify WA
+                            </a>
+                          );
+                        })()}
+                        {isDuplicatePhone(lead.phone, lead.id) && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-500/10 text-rose-455 border border-rose-500/20 text-[9px] font-medium font-sans animate-pulse">
+                            <AlertCircle size={10} />
+                            Duplicate Number
+                          </span>
+                        )}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="flex flex-col items-end gap-1.5">
@@ -2039,6 +2149,7 @@ export default function LeadPipeline({
           </div>
         )}
       </div>
+        </div>
       )}
 
       {/* MODAL: Draft AI Advisor Email */}

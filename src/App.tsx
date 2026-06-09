@@ -98,32 +98,7 @@ export default function App() {
   const [leadEditLogs, setLeadEditLogs] = useState<LeadEditLog[]>(() => {
     const saved = localStorage.getItem("elite_pro_lead_edit_logs");
     if (saved) return JSON.parse(saved);
-    return [
-      {
-        id: "edit-log-init-1",
-        leadId: "lead-3",
-        leadName: "Akira Tanaka",
-        editorName: "Rakesh Verma",
-        editorRole: "sales_team",
-        timestamp: "May 24, 2026, 3:15:22 PM UTC",
-        changes: [
-          { field: "status", oldValue: "Detailed Share", newValue: "Site Visit" },
-          { field: "temperature", oldValue: "Warm", newValue: "Hot" }
-        ]
-      },
-      {
-        id: "edit-log-init-2",
-        leadId: "lead-3",
-        leadName: "Akira Tanaka",
-        editorName: "Rakesh Verma",
-        editorRole: "sales_team",
-        timestamp: "May 22, 2026, 11:20:05 AM UTC",
-        changes: [
-          { field: "notes", oldValue: "Interested in glass facade shell.", newValue: "Deal closed successfully on May 18. Architect plans sent for custom interior facade styling." },
-          { field: "score", oldValue: "85", newValue: "100" }
-        ]
-      }
-    ];
+    return [];
   });
 
   const [currentTab, setCurrentTab] = useState<string>("dashboard");
@@ -242,11 +217,7 @@ export default function App() {
   }, [sheetUrl, sheetRange, autoSheetsSync, lastSheetsSynced, metaVerifyToken, metaAutoIngest, lastMetaSynced, settingsLoaded]);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncHistory, setSyncHistory] = useState<string[]>([
-    "2026-05-25 07:44:12 GMT - Master Node Aligned Successfully",
-    "2026-05-24 18:20:05 GMT - Google workspace domain boundary sync completed",
-    "2026-05-23 09:12:30 GMT - DB transaction ledger reconciled"
-  ]);
+  const [syncHistory, setSyncHistory] = useState<string[]>([]);
 
   // Supabase Integration States
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>({
@@ -674,6 +645,55 @@ export default function App() {
       return isLogForVisibleLead || isLoggedBySelf;
     });
   }, [leadEditLogs, currentUser, visibleLeads]);
+
+  const handleClearLeadEditLogs = async (type: "transfer" | "edit" | "all") => {
+    let updatedLogs: LeadEditLog[] = [];
+    if (type === "transfer") {
+      updatedLogs = leadEditLogs.filter(
+        log => log.editorName !== "System Auto-Transfer Agent" && log.editorName !== "System Auto-Reassigner"
+      );
+    } else if (type === "edit") {
+      updatedLogs = leadEditLogs.filter(
+        log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner"
+      );
+    }
+    
+    setLeadEditLogs(updatedLogs);
+    localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(updatedLogs));
+
+    if (type === "transfer" || type === "all") {
+      setSyncHistory([]);
+    }
+
+    try {
+      await fetch("/api/crm/data", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          leads, 
+          users, 
+          appointments, 
+          communicationLogs, 
+          leadEditLogs: updatedLogs 
+        })
+      });
+
+      if (isAutoSyncEnabled && supabaseStatus.isConnected && supabaseStatus.tablesVerified.lead_edit_logs) {
+        const { clientSupabase } = await import("./supabase");
+        if (clientSupabase) {
+          if (type === "all") {
+            await clientSupabase.from("lead_edit_logs").delete().neq("id", "keep-alive-dummy-id-custom");
+          } else if (type === "transfer") {
+            await clientSupabase.from("lead_edit_logs").delete().in("editorName", ["System Auto-Transfer Agent", "System Auto-Reassigner"]);
+          } else if (type === "edit") {
+            await clientSupabase.from("lead_edit_logs").delete().not("editorName", "in", '("System Auto-Transfer Agent", "System Auto-Reassigner")');
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to sync cleared logs to backend servers:", e);
+    }
+  };
 
   const visibleAppointments = useMemo(() => {
     if (!currentUser) return [];
@@ -1641,6 +1661,44 @@ export default function App() {
     );
   };
 
+  // Handler: Bulk Delete Leads
+  const handleBulkDeleteLeads = (ids: string[]) => {
+    // Role-based Access Control authorization filter
+    if (currentUser?.role !== "super_admin" && currentUser?.role !== "admin") {
+      triggerAlert(
+        "Access Refused",
+        `Full hard removal of real-estate lead portfolios requires [Super Admin] or [Admin] authority.`
+      );
+      return;
+    }
+
+    triggerConfirm(
+      "Confirm Bulk Investor Removal",
+      `Are you sure you want to permanently remove the ${ids.length} selected investor registrations? All records will preserve data integrity locally and compile for cloud sync.`,
+      async () => {
+        setLeads(prev => prev.filter(l => !ids.includes(l.id)));
+        if (isAutoSyncEnabled) {
+          let failCount = 0;
+          let lastErrorMessage = "";
+          for (const id of ids) {
+            const res = await dbDeleteLead(id);
+            if (!res.success) {
+              failCount++;
+              lastErrorMessage = res.error || "Network/Server error";
+            }
+          }
+          if (failCount > 0) {
+            console.warn(`Bulk delete partially failed: ${failCount} of ${ids.length} could not delete from Supabase.`);
+            triggerAlert(
+              "Supabase Sync Warning",
+              `Selected investors removed locally, but ${failCount} entries could not be deleted from Supabase database!\n\nLast Error: ${lastErrorMessage}`
+            );
+          }
+        }
+      }
+    );
+  };
+
   // Handler: Add Appointment
   const handleAddAppointment = async (appt: Omit<Appointment, "id" | "isCompleted">) => {
     const id = "app-" + (appointments.length + 1) + "-" + Math.random().toString(36).substr(2, 4);
@@ -1927,11 +1985,13 @@ export default function App() {
             onBulkAddLeads={handleBulkAddLeads}
             onUpdateLead={handleUpdateLead}
             onDeleteLead={handleDeleteLead}
+            onBulkDeleteLeads={handleBulkDeleteLeads}
             communicationLogs={communicationLogs}
             onAddCommunicationLog={handleAddCommunicationLog}
             darkMode={darkMode}
             currentUser={currentUser}
             leadEditLogs={visibleLeadEditLogs}
+            onClearLeadEditLogs={handleClearLeadEditLogs}
           />
         );
       case "calendar":
