@@ -111,29 +111,47 @@ export function mapLeadFromDb(row: any): Lead {
 }
 
 export function mapLeadToDb(lead: Lead): any {
+  // Safe integer parsing for PG 'score' (INTEGER NOT NULL DEFAULT 50)
+  let scoreVal = 50;
+  if (lead.score !== undefined && lead.score !== null && (lead.score as any) !== "") {
+    const num = Number(lead.score);
+    if (!isNaN(num)) {
+      scoreVal = Math.floor(num);
+    }
+  }
+
+  // Safe bigint/integer helper for nullable timestamp columns
+  const parseNullableBigIntVal = (val: any): number | null => {
+    if (val === undefined || val === null || val === "" || String(val).toLowerCase() === "null") {
+      return null;
+    }
+    const num = Number(val);
+    return isNaN(num) ? null : Math.floor(num);
+  };
+
   return {
     id: lead.id,
     name: lead.name,
-    company: lead.company,
-    position: lead.position,
+    company: lead.company || null,
+    position: lead.position || null,
     email: lead.email,
     phone: lead.phone,
     source: lead.source,
     status: lead.status,
     temperature: lead.temperature,
-    budget: lead.budget,
-    location: lead.location,
+    budget: lead.budget || null,
+    location: lead.location || null,
     assigned_agent: lead.assignedAgent,
-    notes: lead.notes,
-    project_name: lead.projectName,
+    notes: lead.notes || null,
+    project_name: lead.projectName || null,
     date_created: lead.dateCreated,
     date_updated: lead.dateUpdated,
     last_communication: lead.lastCommunication,
-    score: lead.score,
-    assignment_timestamp: lead.assignmentTimestamp || null,
+    score: scoreVal,
+    assignment_timestamp: parseNullableBigIntVal(lead.assignmentTimestamp),
     assigned_tl_id: lead.assignedTlId || null,
-    last_action_timestamp: lead.lastActionTimestamp || null,
-    reassigned_timestamp: lead.reassignedTimestamp || null
+    last_action_timestamp: parseNullableBigIntVal(lead.lastActionTimestamp),
+    reassigned_timestamp: parseNullableBigIntVal(lead.reassignedTimestamp)
   };
 }
 

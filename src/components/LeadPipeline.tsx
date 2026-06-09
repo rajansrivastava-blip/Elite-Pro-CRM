@@ -451,7 +451,7 @@ export default function LeadPipeline({
           if (matchedSource) finalSource = matchedSource;
 
           // Match Status safely
-          const validStatuses = ['New Lead', 'Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate', 'Not Pick', 'Closed Client'];
+          const validStatuses = ['New Lead', 'Interested', 'Follow Up', 'Detailed Share', 'Not Interested', 'Meeting Done', 'Site Visit', 'Call Back', 'Junk', 'Duplicate', 'Not Pick', 'Closed Client', 'Switched Off', 'Low Budget'];
           let finalStatus: any = "New Lead";
           const matchedStatus = validStatuses.find(s => s.toLowerCase() === rawStatusStr.toLowerCase() || s.toLowerCase().replace(/\s+/g, "") === rawStatusStr.toLowerCase().replace(/\s+/g, ""));
           if (matchedStatus) finalStatus = matchedStatus;
@@ -943,6 +943,10 @@ export default function LeadPipeline({
         return "bg-pink-500/10 text-pink-400 border border-pink-500/20";
       case "Not Pick":
         return "bg-amber-600/10 text-amber-500 border border-amber-500/20";
+      case "Switched Off":
+        return "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20";
+      case "Low Budget":
+        return "bg-orange-500/10 text-orange-400 border border-orange-500/20";
       default:
         return "bg-slate-500/10 text-slate-400 border border-slate-500/20";
     }
@@ -1133,6 +1137,8 @@ export default function LeadPipeline({
               <option value="Junk">Junk</option>
               <option value="Duplicate">Duplicate</option>
               <option value="Not Pick">Not Pick</option>
+              <option value="Switched Off">Switched Off</option>
+              <option value="Low Budget">Low Budget</option>
             </select>
           </div>
 
@@ -1646,7 +1652,7 @@ export default function LeadPipeline({
                 Lead Inactivity Auto-Transfer History Ledger
               </h3>
               <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                Real-time security auditing trail of auto-generated reassignments due to 30-minute inactivity rules
+                Real-time security auditing trail of auto-generated reassignments due to 5-minute inactivity rules
               </p>
             </div>
             <span className="px-2.5 py-1 text-xs font-mono font-bold uppercase rounded-lg bg-rose-500/15 text-rose-500 border border-rose-500/25">
@@ -1769,7 +1775,7 @@ export default function LeadPipeline({
             </div>
           ) : (
             <div className="py-12 text-center text-slate-400">
-              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 30 minutes.
+              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 5 minutes.
             </div>
           )}
         </div>
@@ -1841,10 +1847,37 @@ export default function LeadPipeline({
                         <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
                         {(() => {
                           const elapsed = Date.now() - (lead.lastActionTimestamp || lead.assignmentTimestamp || 0);
-                          const remaining = Math.max(0, 30 * 60 * 1000 - elapsed);
+                          const remaining = Math.max(0, 5 * 60 * 1000 - elapsed);
                           const minutes = Math.floor(remaining / 60000);
                           const seconds = Math.floor((remaining % 60000) / 1000);
                           return `Transfer in ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+                        })()}
+                      </span>
+                    )}
+                    {(lead.status === "Not Pick" || lead.status === "Switched Off") && isAgentEligibleForTransfer(lead.assignedAgent) && (
+                      <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
+                        <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
+                        {(() => {
+                          let createdTime = lead.assignmentTimestamp || Date.now();
+                          if (lead.dateCreated) {
+                            const dateParts = lead.dateCreated.split("-");
+                            if (dateParts.length === 3) {
+                              const year = parseInt(dateParts[0], 10);
+                              const month = parseInt(dateParts[1], 10) - 1;
+                              const day = parseInt(dateParts[2], 10);
+                              const parsed = new Date(year, month, day);
+                              if (!isNaN(parsed.getTime())) {
+                                createdTime = parsed.getTime();
+                              }
+                            }
+                          }
+                          const fortyEightHours = 48 * 60 * 60 * 1000;
+                          const elapsed = Date.now() - createdTime;
+                          const remaining = Math.max(0, fortyEightHours - elapsed);
+                          const hours = Math.floor(remaining / 3600000);
+                          const minutes = Math.floor((remaining % 3600000) / 60000);
+                          const seconds = Math.floor((remaining % 60000) / 1000);
+                          return `Transfer in ${hours}h ${minutes}m ${seconds}s`;
                         })()}
                       </span>
                     )}
@@ -2280,6 +2313,8 @@ export default function LeadPipeline({
                     <option value="Junk">Junk</option>
                     <option value="Duplicate">Duplicate</option>
                     <option value="Not Pick">Not Pick</option>
+                    <option value="Switched Off">Switched Off</option>
+                    <option value="Low Budget">Low Budget</option>
                   </select>
                 </div>
 
@@ -2584,6 +2619,8 @@ export default function LeadPipeline({
                     <option value="Junk">Junk</option>
                     <option value="Duplicate">Duplicate</option>
                     <option value="Not Pick">Not Pick</option>
+                    <option value="Switched Off">Switched Off</option>
+                    <option value="Low Budget">Low Budget</option>
                   </select>
                 </div>
 

@@ -325,6 +325,8 @@ export function mapSpreadsheetRowsToLeads(
       else if (parsedStatus.includes("junk") || parsedStatus.includes("spam")) status = "Junk";
       else if (parsedStatus.includes("not pick") || parsedStatus.includes("no pick") || parsedStatus.includes("notpick") || parsedStatus.includes("nopick")) status = "Not Pick";
       else if (parsedStatus.includes("duplicate")) status = "Duplicate";
+      else if (parsedStatus.includes("switched off") || parsedStatus.includes("switchedoff") || parsedStatus.includes("switch off")) status = "Switched Off";
+      else if (parsedStatus.includes("low budget") || parsedStatus.includes("lowbudget")) status = "Low Budget";
     }
 
     // Normalize Temperature

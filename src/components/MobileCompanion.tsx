@@ -300,6 +300,8 @@ export default function MobileCompanion({
                           <option value="Call Back">🔄 Call Back</option>
                           <option value="Not Interested">❌ Not Interested</option>
                           <option value="Not Pick">🔇 Not Pick</option>
+                          <option value="Switched Off">📴 Switched Off</option>
+                          <option value="Low Budget">📉 Low Budget</option>
                         </select>
                       </div>
 

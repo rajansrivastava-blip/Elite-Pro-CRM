@@ -36,7 +36,9 @@ export type LeadStatus =
   | 'Duplicate'
   | 'Not Pick'
   | 'New Lead'
-  | 'Closed Client';
+  | 'Closed Client'
+  | 'Switched Off'
+  | 'Low Budget';
 
 export type LeadTemperature = 'Hot' | 'Warm' | 'Cold' | 'Dead';
 

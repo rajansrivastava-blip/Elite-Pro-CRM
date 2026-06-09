@@ -53,7 +53,7 @@ export default function StakeholderReports({
 
   const wonPipelineVal = wonLeads.reduce((sum, lead) => sum + parseBudgetValue(lead.budget), 0);
   const totalPipelineVal = leads
-    .filter(l => l.status !== "Not Interested" && l.status !== "Junk" && l.status !== "Duplicate")
+    .filter(l => l.status !== "Not Interested" && l.status !== "Junk" && l.status !== "Duplicate" && l.status !== "Switched Off" && l.status !== "Low Budget")
     .reduce((sum, lead) => sum + parseBudgetValue(lead.budget), 0);
   
   const rawConversionRate = totalLeadsCount > 0 
@@ -65,7 +65,7 @@ export default function StakeholderReports({
     Contacted: leads.filter(l => l.status === "Call Back" || l.status === "Detailed Share").length,
     ConceptPlanning: leads.filter(l => l.status === "Detailed Share").length,
     Won: wonCount,
-    Lost: leads.filter(l => l.status === "Not Interested" || l.status === "Junk" || l.status === "Duplicate").length,
+    Lost: leads.filter(l => l.status === "Not Interested" || l.status === "Junk" || l.status === "Duplicate" || l.status === "Switched Off" || l.status === "Low Budget").length,
   };
 
   // State

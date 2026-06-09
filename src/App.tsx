@@ -1146,11 +1146,11 @@ export default function App() {
     }
   }, [users]);
 
-  // Background monitoring for 30-minute Lead Auto-Transfer Rule
+  // Background monitoring for 5-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
   useEffect(() => {
     const checkAndReassignLeads = () => {
       const now = Date.now();
-      const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in milliseconds
+      const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
       
       let wasUpdated = false;
       let newNotifications: AppNotification[] = [];
@@ -1198,14 +1198,6 @@ export default function App() {
       };
 
       const updatedLeadsList = leads.map(lead => {
-        if (lead.status !== "New Lead") return lead;
-        
-        // No lead transfer is applicable for leads registered by TL and Sales Team
-        if (lead.createdByUserRole === "team_leader" || lead.createdByUserRole === "sales_team") {
-          return lead;
-        }
-        
-        // Is currently assigned to a Team Leader or Sales Team user?
         const currentAgent = lead.assignedAgent;
         const currentAssignee = users.find(u => {
           const uParts = getNormalizedParts(u.name);
@@ -1213,109 +1205,210 @@ export default function App() {
           const nameMatches = uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
           return nameMatches && (u.role === "team_leader" || u.role === "sales_team");
         });
-        if (!currentAssignee) return lead; // not currently assigned to a TL or Sales Team agent
 
-        // Ensure current occupant of the lead is on the allowed list to trigger auto-transfer
-        if (!isNameInAllowedList(currentAgent)) return lead;
-        
-        // Find reference timestamp for measuring inactivity (last action time or original assignment time)
-        const referenceTime = Math.max(
-          lead.lastActionTimestamp || lead.assignmentTimestamp || 0,
-          lead.assignmentTimestamp || 0,
-          new Date(lead.dateUpdated || lead.dateCreated).getTime() || 0
-        );
-        
-        if (referenceTime === 0 || now - referenceTime < thirtyMinutes) {
-          return lead; // 30 minutes has not passed yet or no valid reference time
+        // 1) Rule A: Existing 30-minute idle auto-transfer rule for "New Lead" status
+        if (lead.status === "New Lead") {
+          // No lead transfer is applicable for leads registered by TL and Sales Team
+          if (lead.createdByUserRole === "team_leader" || lead.createdByUserRole === "sales_team") {
+            return lead;
+          }
+          if (!currentAssignee) return lead; // not currently assigned to a TL or Sales Team agent
+
+          // Ensure current occupant of the lead is on the allowed list to trigger auto-transfer
+          if (!isNameInAllowedList(currentAgent)) return lead;
+          
+          // Find reference timestamp for measuring inactivity (last action time or original assignment time)
+          const referenceTime = Math.max(
+            lead.lastActionTimestamp || lead.assignmentTimestamp || 0,
+            lead.assignmentTimestamp || 0,
+            new Date(lead.dateUpdated || lead.dateCreated).getTime() || 0
+          );
+          
+          if (referenceTime === 0 || now - referenceTime < fiveMinutes) {
+            return lead; // 5 minutes has not passed yet or no valid reference time
+          }
+          
+          // Get all members of the same role (team_leader or sales_team) for Round Robin distribution
+          const poolRole = currentAssignee.role;
+          const sameRolePool = users.filter(u => 
+            u.role === poolRole && 
+            isNameInAllowedList(u.name)
+          );
+          if (sameRolePool.length <= 1) return lead; // No other user of this role in the allowed list to transfer to
+          
+          const currentIndex = sameRolePool.findIndex(u => {
+            const uParts = getNormalizedParts(u.name);
+            const agentParts = getNormalizedParts(currentAgent);
+            return uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
+          });
+          const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % sameRolePool.length;
+          const nextTeammate = sameRolePool[nextIndex];
+          
+          wasUpdated = true;
+          
+          // Create activity log message and notifications
+          const currentRoleLabel = poolRole === "team_leader" ? "Team Leader" : "Sales Advisor";
+          const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 5 minutes while status remained 'New Lead'.`;
+          
+          const newEditLog: LeadEditLog = {
+            id: "edit-log-auto-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            leadId: lead.id,
+            leadName: lead.name,
+            editorName: "System Auto-Transfer Agent",
+            editorRole: "super_admin",
+            timestamp: new Date().toLocaleString("en-US", { 
+              timeStyle: "medium", 
+              dateStyle: "medium",
+              timeZone: "UTC"
+            }) + " UTC",
+            changes: [
+              { field: "assignedAgent", oldValue: currentAgent, newValue: nextTeammate.name }
+            ]
+          };
+          newEditLogs.push(newEditLog);
+          
+          // Message notifications
+          const notifPrev: AppNotification = {
+            id: "notif-prev-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            recipientName: currentAgent,
+            title: "Lead Transferred Out (Inactivity)",
+            message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 5 minutes.`,
+            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+            isRead: false,
+            type: "update",
+            leadId: lead.id,
+            leadName: lead.name
+          };
+          
+          const notifNext: AppNotification = {
+            id: "notif-next-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            recipientName: nextTeammate.name,
+            title: "Inactivity Lead Assignment",
+            message: `Lead "${lead.name}" has been automatically transferred to you from ${currentAgent}.`,
+            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+            isRead: false,
+            type: "assignment",
+            leadId: lead.id,
+            leadName: lead.name
+          };
+          
+          const notifAdmin: AppNotification = {
+            id: "notif-admin-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            recipientName: "Admin",
+            title: "System Auto-Reassignment",
+            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (5-min inactivity).`,
+            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+            isRead: false,
+            type: "update",
+            leadId: lead.id,
+            leadName: lead.name
+          };
+          newNotifications.push(notifPrev, notifNext, notifAdmin);
+          
+          return {
+            ...lead,
+            assignedAgent: nextTeammate.name,
+            assignedTlId: nextTeammate.id,
+            assignmentTimestamp: now,
+            lastActionTimestamp: now,
+            reassignedTimestamp: now,
+            notes: lead.notes,
+            dateUpdated: new Date().toISOString().split("T")[0]
+          };
         }
-        
-        // Get all members of the same role (team_leader or sales_team) for Round Robin distribution
-        const poolRole = currentAssignee.role;
-        const sameRolePool = users.filter(u => 
-          u.role === poolRole && 
-          isNameInAllowedList(u.name)
-        );
-        if (sameRolePool.length <= 1) return lead; // No other user of this role in the allowed list to transfer to
-        
-        const currentIndex = sameRolePool.findIndex(u => {
-          const uParts = getNormalizedParts(u.name);
-          const agentParts = getNormalizedParts(currentAgent);
-          return uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
-        });
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % sameRolePool.length;
-        const nextTeammate = sameRolePool[nextIndex];
-        
-        wasUpdated = true;
-        
-        // Create activity log message and notifications
-        const currentRoleLabel = poolRole === "team_leader" ? "Team Leader" : "Sales Advisor";
-        const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 30 minutes while status remained 'New Lead'.`;
-        
-        const newEditLog: LeadEditLog = {
-          id: "edit-log-auto-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          leadId: lead.id,
-          leadName: lead.name,
-          editorName: "System Auto-Transfer Agent",
-          editorRole: "super_admin",
-          timestamp: new Date().toLocaleString("en-US", { 
-            timeStyle: "medium", 
-            dateStyle: "medium",
-            timeZone: "UTC"
-          }) + " UTC",
-          changes: [
-            { field: "assignedAgent", oldValue: currentAgent, newValue: nextTeammate.name }
-          ]
-        };
-        newEditLogs.push(newEditLog);
-        
-        // Message notifications
-        const notifPrev: AppNotification = {
-          id: "notif-prev-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          recipientName: currentAgent,
-          title: "Lead Transferred Out (Inactivity)",
-          message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 30 minutes.`,
-          timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-          isRead: false,
-          type: "update",
-          leadId: lead.id,
-          leadName: lead.name
-        };
-        
-        const notifNext: AppNotification = {
-          id: "notif-next-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          recipientName: nextTeammate.name,
-          title: "Inactivity Lead Assignment",
-          message: `Lead "${lead.name}" has been automatically transferred to you from ${currentAgent}.`,
-          timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-          isRead: false,
-          type: "assignment",
-          leadId: lead.id,
-          leadName: lead.name
-        };
-        
-        const notifAdmin: AppNotification = {
-          id: "notif-admin-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-          recipientName: "Admin",
-          title: "System Auto-Reassignment",
-          message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (5-min inactivity).`,
-          timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-          isRead: false,
-          type: "update",
-          leadId: lead.id,
-          leadName: lead.name
-        };
-        newNotifications.push(notifPrev, notifNext, notifAdmin);
-        
-        return {
-          ...lead,
-          assignedAgent: nextTeammate.name,
-          assignedTlId: nextTeammate.id,
-          assignmentTimestamp: now,
-          lastActionTimestamp: now,
-          reassignedTimestamp: now,
-          notes: lead.notes,
-          dateUpdated: new Date().toISOString().split("T")[0]
-        };
+
+        // 2) Rule B: New 48-hour random auto-transfer rule for "Not Pick" and "Switched Off" statuses
+        if (lead.status === "Not Pick" || lead.status === "Switched Off") {
+          const createdTime = new Date(lead.dateCreated).getTime();
+          const fortyEightHours = 48 * 60 * 60 * 1000;
+          if (isNaN(createdTime) || now - createdTime < fortyEightHours) {
+            return lead;
+          }
+
+          // Fetch list of active/allowed sales team users excluding the current agent (to assign randomly)
+          const salesPool = users.filter(u => 
+            u.role === "sales_team" && 
+            isNameInAllowedList(u.name) &&
+            u.name.toLowerCase() !== (currentAgent || "").toLowerCase()
+          );
+
+          if (salesPool.length === 0) return lead; // No other sales team member to transfer to
+
+          // Pick a random sales teammate
+          const nextTeammate = salesPool[Math.floor(Math.random() * salesPool.length)];
+
+          wasUpdated = true;
+
+          const activityMsg = `Lead automatically reassigned randomly to ${nextTeammate.name} from ${currentAgent} because it remained in '${lead.status}' status for more than 48 hours since creation.`;
+
+          const newEditLog: LeadEditLog = {
+            id: "edit-log-auto-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            leadId: lead.id,
+            leadName: lead.name,
+            editorName: "System Auto-Reassigner",
+            editorRole: "super_admin",
+            timestamp: new Date().toLocaleString("en-US", { 
+              timeStyle: "medium", 
+              dateStyle: "medium",
+              timeZone: "UTC"
+            }) + " UTC",
+            changes: [
+              { field: "assignedAgent", oldValue: currentAgent, newValue: nextTeammate.name }
+            ]
+          };
+          newEditLogs.push(newEditLog);
+
+          // Notifications
+          const notifPrev: AppNotification = {
+            id: "notif-prev-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            recipientName: currentAgent,
+            title: "Lead Transferred Out (48h)",
+            message: `Lead "${lead.name}" (Status: ${lead.status}) has been randomly reassigned to ${nextTeammate.name} after 48h.`,
+            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+            isRead: false,
+            type: "update",
+            leadId: lead.id,
+            leadName: lead.name
+          };
+
+          const notifNext: AppNotification = {
+            id: "notif-next-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            recipientName: nextTeammate.name,
+            title: "Random 48h Lead Assignment",
+            message: `Lead "${lead.name}" has been randomly assigned to you because previous agent marked as "${lead.status}" for over 48h since creation.`,
+            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+            isRead: false,
+            type: "assignment",
+            leadId: lead.id,
+            leadName: lead.name
+          };
+
+          const notifAdmin: AppNotification = {
+            id: "notif-admin-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            recipientName: "Admin",
+            title: "System 48h Auto-Transfer",
+            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (48h ${lead.status}).`,
+            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
+            isRead: false,
+            type: "update",
+            leadId: lead.id,
+            leadName: lead.name
+          };
+          newNotifications.push(notifPrev, notifNext, notifAdmin);
+
+          return {
+            ...lead,
+            assignedAgent: nextTeammate.name,
+            assignedTlId: nextTeammate.id,
+            assignmentTimestamp: now,
+            lastActionTimestamp: now,
+            reassignedTimestamp: now,
+            notes: (lead.notes ? lead.notes + "\n" : "") + "[System] " + activityMsg,
+            dateUpdated: new Date().toISOString().split("T")[0]
+          };
+        }
+
+        return lead;
       });
       
       if (wasUpdated) {

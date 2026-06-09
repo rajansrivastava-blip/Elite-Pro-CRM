@@ -191,7 +191,7 @@ export default function PerformanceDashboard({
     contacted: currentFilteredLeads.filter(l => l.status === "Call Back" || l.status === "Detailed Share").length,
     negotiating: currentFilteredLeads.filter(l => l.status === "Detailed Share").length,
     won: currentFilteredLeads.filter(l => l.status === "Closed Client").length,
-    lost: currentFilteredLeads.filter(l => l.status === "Not Interested" || l.status === "Junk" || l.status === "Duplicate").length,
+    lost: currentFilteredLeads.filter(l => l.status === "Not Interested" || l.status === "Junk" || l.status === "Duplicate" || l.status === "Switched Off" || l.status === "Low Budget").length,
   };
 
   // Group by Agent for Elite Team Leaderboard (filtered group context)
