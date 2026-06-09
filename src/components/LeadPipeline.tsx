@@ -176,6 +176,27 @@ export default function LeadPipeline({
   const [showTransferLogs, setShowTransferLogs] = useState(false);
   const [copiedTransfers, setCopiedTransfers] = useState(false);
 
+  const getDisplayNotes = (notesStr: string) => {
+    if (!notesStr) return "";
+    const isSpecialAdmin = currentUser?.role === "super_admin" || currentUser?.role === "admin";
+    if (isSpecialAdmin) {
+      return notesStr;
+    }
+    return notesStr
+      .split("\n")
+      .filter(line => {
+        const lower = line.toLowerCase();
+        return !line.includes("[System]") && 
+               !lower.includes("automatically reassigned") && 
+               !lower.includes("reassigned randomly") &&
+               !lower.includes("system auto-transfer") &&
+               !lower.includes("remained in") &&
+               !lower.includes("hours since creation");
+      })
+      .join("\n")
+      .trim();
+  };
+
   // Expanded dynamic filters (Project, Location, Budget, TL / Advisor wise)
   const [leadProjectFilter, setLeadProjectFilter] = useState<string>("all");
   const [leadLocationFilter, setLeadLocationFilter] = useState<string>("all");
@@ -1055,10 +1076,10 @@ export default function LeadPipeline({
               >
                 <Clock size={14} className={showTransferLogs ? "animate-bounce" : ""} />
                 <span>{showTransferLogs ? "Hide Transfer Histories" : "Show Lead Auto-Transfer Logs"}</span>
-                {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").length > 0 && (
+                {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner").length > 0 && (
                   <span className={`px-1.5 py-0.5 rounded-md text-[9px] font-mono leading-none font-bold
                     ${showTransferLogs ? "bg-rose-700/50 text-white" : "bg-rose-500/15 text-rose-400 border border-rose-500/10"}`}>
-                    {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").length}
+                    {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner").length}
                   </span>
                 )}
               </button>
@@ -1662,7 +1683,7 @@ export default function LeadPipeline({
 
           {/* Consolidated Copyable Text Area Console */}
           {(() => {
-            const transferLogs = leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent");
+            const transferLogs = leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner");
             const compiledText = transferLogs.map((log, idx) => {
               const routeChange = log.changes.find(c => c.field === "assignedAgent");
               const oldVal = routeChange?.oldValue || "Unassigned";
@@ -1722,9 +1743,9 @@ export default function LeadPipeline({
             );
           })()}
 
-          {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").length > 0 ? (
+          {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner").length > 0 ? (
             <div className="space-y-4">
-              {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent").map((log) => (
+              {leadEditLogs.filter(log => log.editorName === "System Auto-Transfer Agent" || log.editorName === "System Auto-Reassigner").map((log) => (
                 <div 
                   key={log.id} 
                   className={`p-4 rounded-xl border font-sans text-xs transition duration-155
@@ -1928,7 +1949,7 @@ export default function LeadPipeline({
                 <div className="space-y-1 mt-3">
                   <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest font-mono">Latest Consultation Synopsis (Notes)</p>
                   <p className={`text-xs font-light italic leading-relaxed line-clamp-2 ${darkMode ? "text-slate-350" : "text-slate-600"}`}>
-                    "{lead.notes || "No advisory brief recorded yet."}"
+                    "{getDisplayNotes(lead.notes) || "No advisory brief recorded yet."}"
                   </p>
                 </div>
               </div>
@@ -1976,7 +1997,7 @@ export default function LeadPipeline({
                   <div className="flex gap-1.5">
                     <button
                       id={`edit-lead-${lead.id}`}
-                      onClick={() => setEditingLead(lead)}
+                      onClick={() => setEditingLead(currentUser?.role === "super_admin" || currentUser?.role === "admin" ? lead : { ...lead, notes: getDisplayNotes(lead.notes) })}
                       className={`p-2 rounded-xl transition duration-155 cursor-pointer border
                         ${darkMode 
                           ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200" 

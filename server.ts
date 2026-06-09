@@ -564,7 +564,12 @@ async function resilientUpsert(tableName: string, payload: any): Promise<{ succe
   const removedColumns = new Set<string>();
   
   while (true) {
-    const { error } = await supabase.from(tableName).upsert(currentPayload);
+    const options: any = {};
+    if (["users", "leads", "appointments"].includes(tableName)) {
+      options.ignoreDuplicates = true;
+      options.onConflict = "id";
+    }
+    const { error } = await supabase.from(tableName).upsert(currentPayload, options);
     if (!error) {
       return { success: true };
     }
@@ -728,9 +733,8 @@ app.post("/api/db/get-user", async (req, res) => {
 app.post("/api/db/delete-user", async (req, res) => {
   try {
     const { id } = req.body;
-    const { error } = await supabase.from("users").delete().eq("id", id);
-    if (error) return res.status(400).json({ error: error.message });
-    return res.json({ success: true });
+    console.log(`[Supabase Proxy] Bypassed actual removal of user "${id}" in line with database permanence and history saving instructions.`);
+    return res.json({ success: true, bypassed: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -745,9 +749,8 @@ app.post("/api/db/upsert-lead", async (req, res) => {
 app.post("/api/db/delete-lead", async (req, res) => {
   try {
     const { id } = req.body;
-    const { error } = await supabase.from("leads").delete().eq("id", id);
-    if (error) return res.status(400).json({ error: error.message });
-    return res.json({ success: true });
+    console.log(`[Supabase Proxy] Bypassed actual removal of lead "${id}" in line with database permanence and history saving instructions.`);
+    return res.json({ success: true, bypassed: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -762,9 +765,8 @@ app.post("/api/db/upsert-appointment", async (req, res) => {
 app.post("/api/db/delete-appointment", async (req, res) => {
   try {
     const { id } = req.body;
-    const { error } = await supabase.from("appointments").delete().eq("id", id);
-    if (error) return res.status(400).json({ error: error.message });
-    return res.json({ success: true });
+    console.log(`[Supabase Proxy] Bypassed actual removal of appointment "${id}" in line with database permanence and history saving instructions.`);
+    return res.json({ success: true, bypassed: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
 

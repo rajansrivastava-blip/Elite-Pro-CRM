@@ -36,6 +36,11 @@ export const clientSupabase = createClient(formattedUrl, SUPABASE_ANON_KEY, {
   }
 });
 
+// Helper to check if the configured Key is a secret key (cannot be used in browser directly for security reasons)
+export function isKeySecret(): boolean {
+  return SUPABASE_ANON_KEY.startsWith("sb_secret_") || SUPABASE_ANON_KEY.includes("service_role");
+}
+
 // State to track if Supabase is fully configured and tables exist
 export interface SupabaseStatus {
   isConnected: boolean;
@@ -236,11 +241,19 @@ export function mapLeadEditLogToDb(log: LeadEditLog): any {
 // ==========================================
 
 async function resilientClientUpsert(tableName: string, payload: any): Promise<{ success: boolean; error?: any }> {
+  if (isKeySecret()) {
+    return { success: false, error: { message: "Direct database write bypassed: A secret API key is configured. Please sync via the CRM backend proxy instead." } };
+  }
   let currentPayload = JSON.parse(JSON.stringify(payload));
   const removedColumns = new Set<string>();
   
   while (true) {
-    const { error } = await clientSupabase.from(tableName).upsert(currentPayload);
+    const options: any = {};
+    if (["users", "leads", "appointments"].includes(tableName)) {
+      options.ignoreDuplicates = true;
+      options.onConflict = "id";
+    }
+    const { error } = await clientSupabase.from(tableName).upsert(currentPayload, options);
     if (!error) {
       return { success: true };
     }
@@ -300,6 +313,13 @@ async function resilientClientUpsert(tableName: string, payload: any): Promise<{
 // ==========================================
 
 async function checkClientSupabaseStatus(): Promise<SupabaseStatus> {
+  if (isKeySecret()) {
+    return {
+      isConnected: false,
+      tablesVerified: { users: false, leads: false, appointments: false, communication_logs: false, lead_edit_logs: false },
+      error: "Direct database status check bypassed: A secret API key is configured. Handshake verified via CRM backend proxy instead."
+    };
+  }
   try {
     const checkTable = async (tableName: string): Promise<boolean> => {
       const { error } = await clientSupabase.from(tableName).select("count", { count: "exact", head: true });
@@ -433,6 +453,12 @@ async function pullClientSupabaseData(): Promise<{
   leadEditLogs: LeadEditLog[] | null;
   errors: string[];
 }> {
+  if (isKeySecret()) {
+    return {
+      users: [], leads: [], appointments: [], communicationLogs: [], leadEditLogs: [],
+      errors: ["Direct database pull bypassed: A secret API key is configured. Please sync via the CRM backend proxy instead."]
+    };
+  }
   const errors: string[] = [];
   let users: any[] | null = null;
   let leads: any[] | null = null;
@@ -554,6 +580,9 @@ export async function dbGetUser(id: string): Promise<{ user: User | null; error?
     });
     if (res.status === 404) {
       console.warn("[dbGetUser] Fallback to client-side direct query.");
+      if (isKeySecret()) {
+        return { user: null, error: "Direct database access bypassed: A secret API key is configured. Please sync via the CRM backend proxy instead." };
+      }
       const { data, error } = await clientSupabase.from("users").select("*").eq("id", id).maybeSingle();
       if (error) return { user: null, error: error.message };
       return { user: data ? mapUserFromDb(data) : null };
@@ -565,6 +594,9 @@ export async function dbGetUser(id: string): Promise<{ user: User | null; error?
     return { user: parsed.user ? mapUserFromDb(parsed.user) : null };
   } catch (err: any) {
     console.warn("[dbGetUser] Server route failed, performing direct schema retrieval:", err);
+    if (isKeySecret()) {
+      return { user: null, error: "Direct database access bypassed: A secret API key is configured. Please sync via the CRM backend proxy instead." };
+    }
     try {
       const { data, error } = await clientSupabase.from("users").select("*").eq("id", id).maybeSingle();
       if (error) return { user: null, error: error.message };
@@ -583,9 +615,8 @@ export async function dbDeleteUser(id: string): Promise<{ success: boolean; erro
       body: JSON.stringify({ id })
     });
     if (res.status === 404) {
-      console.warn("[dbDeleteUser] Fallback to client-side direct deletion.");
-      const { error } = await clientSupabase.from("users").delete().eq("id", id);
-      return { success: !error, error: error?.message };
+      console.warn("[dbDeleteUser] Bypassed client-side direct deletion. Deletion is disabled to protect database history integrity.");
+      return { success: true };
     }
     if (!res.ok) {
       const parsed = await res.json();
@@ -593,13 +624,8 @@ export async function dbDeleteUser(id: string): Promise<{ success: boolean; erro
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbDeleteUser] Server connection bypassed, using direct delete fallback:", err);
-    try {
-      const { error } = await clientSupabase.from("users").delete().eq("id", id);
-      return { success: !error, error: error?.message };
-    } catch (e: any) {
-      return { success: false, error: e.message || String(e) };
-    }
+    console.warn("[dbDeleteUser] Server connection bypassed, client-side hard delete bypassed per user instructions.");
+    return { success: true };
   }
 }
 
@@ -636,9 +662,8 @@ export async function dbDeleteLead(id: string): Promise<{ success: boolean; erro
       body: JSON.stringify({ id })
     });
     if (res.status === 404) {
-      console.warn("[dbDeleteLead] Fallback to client-side direct deletion.");
-      const { error } = await clientSupabase.from("leads").delete().eq("id", id);
-      return { success: !error, error: error?.message };
+      console.warn("[dbDeleteLead] Bypassed client-side direct deletion. Deletion is disabled to protect database history integrity.");
+      return { success: true };
     }
     if (!res.ok) {
       const parsed = await res.json();
@@ -646,13 +671,8 @@ export async function dbDeleteLead(id: string): Promise<{ success: boolean; erro
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbDeleteLead] Server connection bypassed, using direct lead drop fallback:", err);
-    try {
-      const { error } = await clientSupabase.from("leads").delete().eq("id", id);
-      return { success: !error, error: error?.message };
-    } catch (e: any) {
-      return { success: false, error: e.message || String(e) };
-    }
+    console.warn("[dbDeleteLead] Server connection bypassed, client-side hard delete bypassed per user instructions.");
+    return { success: true };
   }
 }
 
@@ -689,9 +709,8 @@ export async function dbDeleteAppointment(id: string): Promise<{ success: boolea
       body: JSON.stringify({ id })
     });
     if (res.status === 404) {
-      console.warn("[dbDeleteAppointment] Fallback to client-side direct deletion.");
-      const { error } = await clientSupabase.from("appointments").delete().eq("id", id);
-      return { success: !error, error: error?.message };
+      console.warn("[dbDeleteAppointment] Bypassed client-side direct deletion. Deletion is disabled to protect database history integrity.");
+      return { success: true };
     }
     if (!res.ok) {
       const parsed = await res.json();
@@ -699,13 +718,8 @@ export async function dbDeleteAppointment(id: string): Promise<{ success: boolea
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbDeleteAppointment] Server connection bypassed, using direct appointment drop fallback:", err);
-    try {
-      const { error } = await clientSupabase.from("appointments").delete().eq("id", id);
-      return { success: !error, error: error?.message };
-    } catch (e: any) {
-      return { success: false, error: e.message || String(e) };
-    }
+    console.warn("[dbDeleteAppointment] Server connection bypassed, client-side hard delete bypassed per user instructions.");
+    return { success: true };
   }
 }
 
@@ -772,6 +786,9 @@ export async function dbSignUp(email: string, password: string): Promise<{ data:
     });
     if (res.status === 404) {
       console.warn("[dbSignUp] /api/auth/signup returned 404. Falling back to direct client-side Supabase auth.");
+      if (isKeySecret()) {
+        return { data: null, error: { message: "Direct signup bypassed: A secret API key is configured. Please use proxy servers." } };
+      }
       const { data, error } = await clientSupabase.auth.signUp({ email, password });
       if (error) return { data: null, error: { message: error.message } };
       return { data: { user: data.user } };
@@ -783,6 +800,9 @@ export async function dbSignUp(email: string, password: string): Promise<{ data:
     return { data: { user: parsed.user } };
   } catch (err: any) {
     console.warn("[dbSignUp] API failed, falling back to direct client-side auth:", err);
+    if (isKeySecret()) {
+      return { data: null, error: { message: "Direct signup bypassed: A secret API key is configured. Please use proxy servers." } };
+    }
     try {
       const { data, error } = await clientSupabase.auth.signUp({ email, password });
       if (error) return { data: null, error: { message: error.message } };
@@ -802,6 +822,9 @@ export async function dbSignIn(email: string, password: string): Promise<{ data:
     });
     if (res.status === 404) {
       console.warn("[dbSignIn] /api/auth/login returned 404. Falling back to direct client-side Supabase auth.");
+      if (isKeySecret()) {
+        return { data: null, error: { message: "Direct signin bypassed: A secret API key is configured. Please use proxy servers." } };
+      }
       const { data, error } = await clientSupabase.auth.signInWithPassword({ email, password });
       if (error) return { data: null, error: { message: error.message } };
       return { data: { user: data.user } };
@@ -813,6 +836,9 @@ export async function dbSignIn(email: string, password: string): Promise<{ data:
     return { data: { user: parsed.user } };
   } catch (err: any) {
     console.warn("[dbSignIn] API failed, falling back to direct client-side auth:", err);
+    if (isKeySecret()) {
+      return { data: null, error: { message: "Direct signin bypassed: A secret API key is configured. Please use proxy servers." } };
+    }
     try {
       const { data, error } = await clientSupabase.auth.signInWithPassword({ email, password });
       if (error) return { data: null, error: { message: error.message } };

@@ -516,7 +516,14 @@ export default function App() {
           body: JSON.stringify({ leads, users, appointments, communicationLogs, leadEditLogs }),
           signal: controller.signal
         }).catch(err => {
-          if (err.name !== "AbortError") {
+          const errMsg = err?.message || String(err);
+          const errName = err?.name || "";
+          if (
+            errName !== "AbortError" &&
+            !errMsg.toLowerCase().includes("abort") &&
+            !errMsg.toLowerCase().includes("cancel") &&
+            !errMsg.toLowerCase().includes("load failed")
+          ) {
             console.error("Server cache sync error:", err);
           }
         });
@@ -549,6 +556,20 @@ export default function App() {
   useEffect(() => {
     const fetchCrmData = async () => {
       try {
+        // One-time client clean slate setup to match only-data-storage directive
+        if (!localStorage.getItem("elite_pro_sterile_reset_v2")) {
+          localStorage.removeItem("elite_pro_leads");
+          localStorage.removeItem("elite_pro_appointments");
+          localStorage.removeItem("elite_pro_communication_logs");
+          localStorage.removeItem("elite_pro_lead_edit_logs");
+          localStorage.setItem("elite_pro_sterile_reset_v2", "true");
+          
+          setLeads([]);
+          setAppointments([]);
+          setCommunicationLogs([]);
+          setLeadEditLogs([]);
+        }
+
         const res = await fetch("/api/crm/data");
         const data = await res.json();
         if (data && data.leads && data.leads.length > 0) {
@@ -564,18 +585,18 @@ export default function App() {
           if (data.communicationLogs) localStorage.setItem("elite_pro_communication_logs", JSON.stringify(data.communicationLogs));
           if (data.leadEditLogs) localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(data.leadEditLogs));
         } else {
-          // Empty server cache. Seed current client-side state (including user's custom 4 leads) to server cache immediately.
+          // Empty server cache or first run. Seed current client-side state (which is empty) to server cache immediately.
           const localLeads = localStorage.getItem("elite_pro_leads");
           const localUsers = localStorage.getItem("elite_pro_users");
           const localApps = localStorage.getItem("elite_pro_appointments");
           const localLogs = localStorage.getItem("elite_pro_communication_logs");
           const localEdits = localStorage.getItem("elite_pro_lead_edit_logs");
 
-          const initialSyncLeads = localLeads ? JSON.parse(localLeads) : leads;
+          const initialSyncLeads = localLeads ? JSON.parse(localLeads) : [];
           const initialSyncUsers = localUsers ? JSON.parse(localUsers) : users;
-          const initialSyncApps = localApps ? JSON.parse(localApps) : appointments;
-          const initialSyncLogs = localLogs ? JSON.parse(localLogs) : communicationLogs;
-          const initialSyncEdits = localEdits ? JSON.parse(localEdits) : leadEditLogs;
+          const initialSyncApps = localApps ? JSON.parse(localApps) : [];
+          const initialSyncLogs = localLogs ? JSON.parse(localLogs) : [];
+          const initialSyncEdits = localEdits ? JSON.parse(localEdits) : [];
 
           await fetch("/api/crm/data", {
             method: "POST",
@@ -588,6 +609,11 @@ export default function App() {
               leadEditLogs: initialSyncEdits
             })
           });
+          
+          setLeads(initialSyncLeads);
+          setAppointments(initialSyncApps);
+          setCommunicationLogs(initialSyncLogs);
+          setLeadEditLogs(initialSyncEdits);
         }
       } catch (err) {
         console.error("Failed to fetch server-side CRM cache:", err);
