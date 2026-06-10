@@ -712,6 +712,85 @@ app.get("/api/db/pull", async (req, res) => {
   });
 });
 
+// DB: Clear All CRM Data from Supabase and Server Cache
+app.post("/api/db/clear-all", async (req, res) => {
+  try {
+    const errors: string[] = [];
+
+    // 1. Delete rows from Supabase (child tables first to avoid foreign key constraint violations)
+    let childErrorOccurred = false;
+
+    const { error: editsErr } = await supabase.from("lead_edit_logs").delete().neq("id", "_nonexistent_id_");
+    if (editsErr && editsErr.code !== "42P01") {
+      errors.push(`Lead edit logs delete error: ${editsErr.message || JSON.stringify(editsErr)}`);
+      childErrorOccurred = true;
+    }
+
+    const { error: commsErr } = await supabase.from("communication_logs").delete().neq("id", "_nonexistent_id_");
+    if (commsErr && commsErr.code !== "42P01") {
+      errors.push(`Communication logs delete error: ${commsErr.message || JSON.stringify(commsErr)}`);
+      childErrorOccurred = true;
+    }
+
+    const { error: apptsErr } = await supabase.from("appointments").delete().neq("id", "_nonexistent_id_");
+    if (apptsErr && apptsErr.code !== "42P01") {
+      errors.push(`Appointments delete error: ${apptsErr.message || JSON.stringify(apptsErr)}`);
+      childErrorOccurred = true;
+    }
+
+    // Only after all dependent records are removed should the leads table be cleared
+    if (!childErrorOccurred) {
+      const { error: leadsErr } = await supabase.from("leads").delete().neq("id", "_nonexistent_id_");
+      if (leadsErr && leadsErr.code !== "42P01") {
+        errors.push(`Leads delete error: ${leadsErr.message || JSON.stringify(leadsErr)}`);
+      }
+    } else {
+      errors.push("Skipped clearing the leads table because child tables containing foreign keys failed to delete beforehand.");
+    }
+
+    // 2. Clear filesystem cache crm_data_cache.json while preserving users
+    let storedUsers: any[] = [];
+    if (fs.existsSync(crmDataPath)) {
+      try {
+        const data = fs.readFileSync(crmDataPath, "utf-8");
+        const parsed = JSON.parse(data);
+        if (parsed && Array.isArray(parsed.users)) {
+          storedUsers = parsed.users;
+        }
+      } catch (err) {
+        console.error("Error reading crmDataPath during clear-all:", err);
+      }
+    }
+
+    const clearedPayload = {
+      leads: [],
+      users: storedUsers,
+      appointments: [],
+      communicationLogs: [],
+      leadEditLogs: []
+    };
+
+    fs.writeFileSync(crmDataPath, JSON.stringify(clearedPayload, null, 2), "utf-8");
+
+    // Clear Meta Webhook leads cache
+    try {
+      if (fs.existsSync(metaLeadsPath)) {
+        fs.writeFileSync(metaLeadsPath, "[]", "utf-8");
+      }
+      metaLeadsCache = [];
+    } catch (err) {
+      console.error("Failed to clear meta leads cache:", err);
+    }
+
+    return res.json({
+      success: errors.length === 0,
+      errors
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, errors: [err.message || String(err)] });
+  }
+});
+
 // DB: Upsert/Delete Individual Record Proxies
 app.post("/api/db/upsert-user", async (req, res) => {
   try {

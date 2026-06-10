@@ -694,9 +694,9 @@ export default function App() {
           if (type === "all") {
             await clientSupabase.from("lead_edit_logs").delete().neq("id", "keep-alive-dummy-id-custom");
           } else if (type === "transfer") {
-            await clientSupabase.from("lead_edit_logs").delete().in("editorName", ["System Auto-Transfer Agent", "System Auto-Reassigner"]);
+            await clientSupabase.from("lead_edit_logs").delete().in("editor_name", ["System Auto-Transfer Agent", "System Auto-Reassigner"]);
           } else if (type === "edit") {
-            await clientSupabase.from("lead_edit_logs").delete().not("editorName", "in", '("System Auto-Transfer Agent", "System Auto-Reassigner")');
+            await clientSupabase.from("lead_edit_logs").delete().not("editor_name", "in", '("System Auto-Transfer Agent", "System Auto-Reassigner")');
           }
         }
       }
@@ -1821,6 +1821,49 @@ export default function App() {
     }
   };
 
+  // Handler: Full Purge & Hard Reset of All Records
+  const handleClearAllRecords = async (): Promise<{ success: boolean; errors?: string[] }> => {
+    try {
+      const response = await fetch("/api/db/clear-all", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      });
+      const res = await response.json();
+      
+      // Update local states regardless of server database errors so the client is clean
+      setLeads([]);
+      setAppointments([]);
+      setCommunicationLogs([]);
+      setLeadEditLogs([]);
+
+      // Sync and store empty arrays as absolute truth
+      localStorage.setItem("elite_pro_leads", JSON.stringify([]));
+      localStorage.setItem("elite_pro_appointments", JSON.stringify([]));
+      localStorage.setItem("elite_pro_communication_logs", JSON.stringify([]));
+      localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify([]));
+
+      setSyncHistory(prev => [
+        `${new Date().toISOString().replace("T", " ").substr(0, 19)} GMT - All portal records & server caches cleared successfully.`,
+        ...prev
+      ]);
+
+      return { success: res.success, errors: res.errors };
+    } catch (err: any) {
+      console.error("Failed to clear CRM records:", err);
+      // Fallback clean even if error
+      setLeads([]);
+      setAppointments([]);
+      setCommunicationLogs([]);
+      setLeadEditLogs([]);
+      localStorage.setItem("elite_pro_leads", JSON.stringify([]));
+      localStorage.setItem("elite_pro_appointments", JSON.stringify([]));
+      localStorage.setItem("elite_pro_communication_logs", JSON.stringify([]));
+      localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify([]));
+
+      return { success: false, errors: [err.message || String(err)] };
+    }
+  };
+
   // Handler: Add Communication Log
   const handleAddCommunicationLog = async (log: Omit<CommunicationLog, "id">) => {
     const id = "log-" + (communicationLogs.length + 1) + "-" + Math.random().toString(36).substr(2, 4);
@@ -2060,6 +2103,7 @@ export default function App() {
             lastMetaSynced={lastMetaSynced}
             setLastMetaSynced={setLastMetaSynced}
             onRestoreCrmData={handleRestoreCrmData}
+            onClearAllRecords={handleClearAllRecords}
           />
         );
       case "users":

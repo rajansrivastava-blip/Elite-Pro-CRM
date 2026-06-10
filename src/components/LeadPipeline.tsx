@@ -177,7 +177,7 @@ export default function LeadPipeline({
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [showLogs, setShowLogs] = useState(false);
-  const [showTransferLogs, setShowTransferLogs] = useState(false);
+  const [showTransferLogs, setShowTransferLogs] = useState(true);
   const [copiedTransfers, setCopiedTransfers] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
 
@@ -2617,7 +2617,7 @@ export default function LeadPipeline({
                   <input
                     id="edit-lead-name"
                     type="text"
-                    value={editingLead.name}
+                    value={editingLead.name || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, name: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -2656,7 +2656,7 @@ export default function LeadPipeline({
                   <input
                     id="edit-lead-budget"
                     type="text"
-                    value={editingLead.budget}
+                    value={editingLead.budget || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, budget: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -2670,7 +2670,7 @@ export default function LeadPipeline({
                   <input
                     id="edit-lead-email"
                     type="email"
-                    value={editingLead.email}
+                    value={editingLead.email || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, email: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -2684,7 +2684,7 @@ export default function LeadPipeline({
                   <input
                     id="edit-lead-phone"
                     type="text"
-                    value={editingLead.phone}
+                    value={editingLead.phone || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, phone: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border focus:outline-none focus:ring-1 focus:ring-teal-500
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}
@@ -2727,7 +2727,7 @@ export default function LeadPipeline({
                     id="edit-lead-location"
                     type="text"
                     placeholder="e.g. Noida Sector 62, India (Optional)"
-                    value={editingLead.location}
+                    value={editingLead.location || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, location: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -2740,7 +2740,7 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Status</label>
                   <select
                     id="edit-lead-status"
-                    value={editingLead.status}
+                    value={editingLead.status || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, status: e.target.value as Lead["status"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200 font-medium"}`}
@@ -2767,7 +2767,7 @@ export default function LeadPipeline({
                   <label className="block text-[10px] font-mono text-slate-400 uppercase tracking-wider mb-1">Lead Priority</label>
                   <select
                     id="edit-lead-temperature"
-                    value={editingLead.temperature}
+                    value={editingLead.temperature || ""}
                     onChange={(e) => setEditingLead({ ...editingLead, temperature: e.target.value as Lead["temperature"] })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border cursor-pointer
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -2795,7 +2795,7 @@ export default function LeadPipeline({
                     id="edit-lead-agent"
                     type="text"
                     placeholder="Select or type agent name..."
-                    value={editingLead.assignedAgent}
+                    value={editingLead.assignedAgent || ""}
                     onChange={(e) => {
                       if (isAuthorizedToAssign) {
                         setEditingLead({ ...editingLead, assignedAgent: e.target.value });
@@ -2846,7 +2846,7 @@ export default function LeadPipeline({
                  <textarea
                    id="edit-lead-notes"
                    rows={3}
-                   value={editingLead.notes}
+                   value={editingLead.notes || ""}
                    onChange={(e) => setEditingLead({ ...editingLead, notes: e.target.value })}
                    className={`w-full px-3 py-2 text-xs rounded-lg border 
                      ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}

@@ -95,6 +95,7 @@ interface SystemSyncProps {
     communicationLogs?: any[];
     leadEditLogs?: any[];
   }) => Promise<void>;
+  onClearAllRecords?: () => Promise<{ success: boolean; errors?: string[] }>;
 }
 
 export default function SystemSync({
@@ -130,7 +131,8 @@ export default function SystemSync({
   setMetaAutoIngest,
   lastMetaSynced,
   setLastMetaSynced,
-  onRestoreCrmData
+  onRestoreCrmData,
+  onClearAllRecords
 }: SystemSyncProps) {
   
   // Privilege check
@@ -143,6 +145,59 @@ export default function SystemSync({
   const [isCheckingServerCache, setIsCheckingServerCache] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
   const [recoveryFeedback, setRecoveryFeedback] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  // System purging states
+  const [isPurging, setIsPurging] = useState(false);
+  const [purgeFeedback, setPurgeFeedback] = useState<{ message: string; type: "success" | "error" } | null>(null);
+
+  const handlePurgeAllData = async () => {
+    if (!onClearAllRecords) {
+      alert("Clear records callback is not registered in the application shell.");
+      return;
+    }
+
+    const confirmWipe1 = window.confirm(
+      "⚠️ WARNING: COMPLETE DATA PURGE DETECTED!\n\nThis will permanently delete ALL customer fields, marketing leads, appointments, communication trails, and edit action history logs from BOTH your Live Supabase database and your Portal caches.\n\nAre you absolutely sure you want to proceed with this hard system reset?"
+    );
+
+    if (!confirmWipe1) return;
+
+    const confirmWipe2 = window.confirm(
+      "⚠️ FINAL SAFETY CHECK!\n\nThis action CANNOT BE UNDONE. This will clear leads registry files down to zero records. Any active team pipeline layouts, reminders, and schedules will be completely wiped from all remote and local sources.\n\nAre you sure you want to trigger this complete purge?"
+    );
+
+    if (!confirmWipe2) return;
+
+    setIsPurging(true);
+    setPurgeFeedback(null);
+
+    try {
+      const res = await onClearAllRecords();
+      if (res.success) {
+        setPurgeFeedback({
+          message: "Database purge accomplished! Successfully deleted and wiped all active leads, reminder tasks, and contact histories from both the central cloud cluster and local portal states.",
+          type: "success"
+        });
+        // Reinforce checking the server cache sizes to reflect zero
+        await checkServerCacheMeta();
+      } else {
+        const errList = res.errors?.join("; ") || "Unknown database cluster connection failure.";
+        setPurgeFeedback({
+          message: `Purge completed with warning parameters: ${errList} (Portal state cleared, but remote tables may have been partially unreachable. If you manually modified or deleted columns directly on Supabase, please verify policies).`,
+          type: "error"
+        });
+        await checkServerCacheMeta();
+      }
+    } catch (err: any) {
+      console.error("Purge failure:", err);
+      setPurgeFeedback({
+        message: `Purge encountered execution error: ${err.message || String(err)}`,
+        type: "error"
+      });
+    } finally {
+      setIsPurging(false);
+    }
+  };
 
   const checkServerCacheMeta = async () => {
     setIsCheckingServerCache(true);
@@ -1939,6 +1994,45 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
           API Integrity verified: Handshaking with Supabase project fzsjeukjjjutiihhzjgu success! Checked all tables status.
         </div>
       )}
+
+      {/* Complete Data Purge & Hard System Reset (Danger Zone) */}
+      <div className={`p-6 rounded-2xl border transition-all ${darkMode ? "bg-slate-900 border-rose-500/15" : "bg-white border-rose-100 shadow-sm shadow-rose-500/5"}`}>
+        <div className="border-b border-rose-500/15 pb-4 mb-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-rose-500">
+              <Trash size={16} className="text-rose-500 shrink-0" />
+              <h4 className="font-display font-semibold text-sm">
+                System Danger Zone: Hard Purge & Reset CRM Database
+              </h4>
+            </div>
+            <p className="text-xs text-slate-400 mt-1 max-w-xl text-left">
+              Permanently clears all CRM pipeline records (leads, appointments, schedules, communication and audit logs) from both the Supabase cloud database and the portal's background file/local storage caches. Use this to prepare a completely blank CRM slate for new records.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            id="clear-all-data-purge-btn"
+            disabled={isPurging || !isPrivileged}
+            onClick={handlePurgeAllData}
+            className="px-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs tracking-wider uppercase transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-55 disabled:cursor-not-allowed select-none min-w-[210px] shadow-sm active:scale-95 text-center"
+          >
+            <Trash size={13} className={isPurging ? "animate-pulse" : ""} />
+            {isPurging ? "Purging All Records..." : "Purge All CRM Records"}
+          </button>
+        </div>
+
+        {purgeFeedback && (
+          <div className={`p-4 rounded-xl text-xs font-semibold flex items-start gap-2 animate-fadeIn border text-left
+            ${purgeFeedback.type === "success" 
+              ? "bg-emerald-500/10 border-emerald-500/25 text-emerald-400" 
+              : "bg-rose-500/10 border-rose-500/25 text-rose-400"}`}
+          >
+            {purgeFeedback.type === "success" ? <CheckCircle2 size={16} className="mt-0.5 shrink-0" /> : <AlertTriangle size={16} className="mt-0.5 shrink-0" />}
+            <div>{purgeFeedback.message}</div>
+          </div>
+        )}
+      </div>
 
       {/* Sync history timeline log */}
       <div className={`p-6 rounded-2xl border transition-all ${darkMode ? "bg-slate-900 border-slate-850" : "bg-white border-slate-100 shadow-sm"}`}>
