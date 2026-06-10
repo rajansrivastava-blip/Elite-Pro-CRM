@@ -453,12 +453,7 @@ export function isDuplicateLead(
 
     // 3. Name-based matching:
     if (nlName === lName) {
-      const nlHasContact = !!(nlEmail || (nlPhone && nlPhone.length >= 7));
-      const lHasContact = !!(lEmail || (lPhone && lPhone.length >= 7));
-      
-      if (!nlHasContact || !lHasContact) {
-        return true;
-      }
+      return true;
     }
 
     return false;

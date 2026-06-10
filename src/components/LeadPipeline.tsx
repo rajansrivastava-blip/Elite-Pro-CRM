@@ -32,6 +32,13 @@ import {
   Download
 } from "lucide-react";
 
+
+const sanitizeDateForInput = (dateStr: string): string => {
+  if (!dateStr) return "";
+  const match = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
+  return match ? dateStr : "";
+};
+
 interface LeadPipelineProps {
   leads: Lead[];
   users?: User[];
@@ -177,9 +184,15 @@ export default function LeadPipeline({
   const [startDate, setStartDate] = useState<string>("");
   const [endDate, setEndDate] = useState<string>("");
   const [showLogs, setShowLogs] = useState(false);
-  const [showTransferLogs, setShowTransferLogs] = useState(true);
+  const [showTransferLogs, setShowTransferLogs] = useState(false);
   const [copiedTransfers, setCopiedTransfers] = useState(false);
   const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([]);
+
+  const revisionLogs = useMemo(() => {
+    return leadEditLogs.filter(
+      log => log.editorName !== "System Auto-Transfer Agent" && log.editorName !== "System Auto-Reassigner"
+    );
+  }, [leadEditLogs]);
 
   const getDisplayNotes = (notesStr: string) => {
     if (!notesStr) return "";
@@ -196,7 +209,8 @@ export default function LeadPipeline({
                !lower.includes("reassigned randomly") &&
                !lower.includes("system auto-transfer") &&
                !lower.includes("remained in") &&
-               !lower.includes("hours since creation");
+               !lower.includes("hours since creation") &&
+               !lower.includes("hours since last assignment/transfer");
       })
       .join("\n")
       .trim();
@@ -1444,7 +1458,7 @@ export default function LeadPipeline({
                   <input
                     id="filter-start-date"
                     type="date"
-                    value={startDate}
+                    value={sanitizeDateForInput(startDate)}
                     onChange={(e) => setStartDate(e.target.value)}
                     className={`pl-3 pr-2 py-1.5 text-xs rounded-lg border outline-none font-mono transition duration-150 focus:border-teal-500 w-full sm:w-[135px]
                       ${darkMode ? "bg-slate-950 border-slate-850 text-white focus:bg-slate-900" : "bg-white border-slate-205 text-slate-800 focus:bg-slate-50"}`}
@@ -1461,7 +1475,7 @@ export default function LeadPipeline({
                   <input
                     id="filter-end-date"
                     type="date"
-                    value={endDate}
+                    value={sanitizeDateForInput(endDate)}
                     onChange={(e) => setEndDate(e.target.value)}
                     className={`pl-3 pr-2 py-1.5 text-xs rounded-lg border outline-none font-mono transition duration-150 focus:border-teal-500 w-full sm:w-[135px]
                       ${darkMode ? "bg-slate-950 border-slate-850 text-white focus:bg-slate-900" : "bg-white border-slate-205 text-slate-800 focus:bg-slate-50"}`}
@@ -1617,9 +1631,9 @@ export default function LeadPipeline({
             </div>
           </div>
 
-          {leadEditLogs.length > 0 ? (
+          {revisionLogs.length > 0 ? (
             <div className="space-y-4">
-              {leadEditLogs.map((log) => (
+              {revisionLogs.map((log) => (
                 <div 
                   key={log.id} 
                   className={`p-4 rounded-xl border font-sans text-xs transition duration-155
@@ -1694,7 +1708,7 @@ export default function LeadPipeline({
                 Lead Inactivity Auto-Transfer History Ledger
               </h3>
               <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                Real-time security auditing trail of auto-generated reassignments due to 5-minute inactivity rules
+                Real-time security auditing trail of auto-generated reassignments due to 30-minute inactivity rules
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1833,7 +1847,7 @@ export default function LeadPipeline({
             </div>
           ) : (
             <div className="py-12 text-center text-slate-400">
-              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 5 minutes.
+              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 30 minutes.
             </div>
           )}
         </div>
@@ -1978,7 +1992,7 @@ export default function LeadPipeline({
                         <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
                         {(() => {
                           const elapsed = Date.now() - (lead.lastActionTimestamp || lead.assignmentTimestamp || 0);
-                          const remaining = Math.max(0, 5 * 60 * 1000 - elapsed);
+                          const remaining = Math.max(0, 30 * 60 * 1000 - elapsed);
                           const minutes = Math.floor(remaining / 60000);
                           const seconds = Math.floor((remaining % 60000) / 1000);
                           return `Transfer in ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
@@ -1989,8 +2003,8 @@ export default function LeadPipeline({
                       <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
                         <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
                         {(() => {
-                          let createdTime = lead.assignmentTimestamp || Date.now();
-                          if (lead.dateCreated) {
+                          let baseTime = lead.reassignedTimestamp || lead.assignmentTimestamp || 0;
+                          if (baseTime === 0 && lead.dateCreated) {
                             const dateParts = lead.dateCreated.split("-");
                             if (dateParts.length === 3) {
                               const year = parseInt(dateParts[0], 10);
@@ -1998,12 +2012,15 @@ export default function LeadPipeline({
                               const day = parseInt(dateParts[2], 10);
                               const parsed = new Date(year, month, day);
                               if (!isNaN(parsed.getTime())) {
-                                createdTime = parsed.getTime();
+                                baseTime = parsed.getTime();
                               }
                             }
                           }
+                          if (baseTime === 0) {
+                            baseTime = Date.now();
+                          }
                           const fortyEightHours = 48 * 60 * 60 * 1000;
-                          const elapsed = Date.now() - createdTime;
+                          const elapsed = Date.now() - baseTime;
                           const remaining = Math.max(0, fortyEightHours - elapsed);
                           const hours = Math.floor(remaining / 3600000);
                           const minutes = Math.floor((remaining % 3600000) / 60000);

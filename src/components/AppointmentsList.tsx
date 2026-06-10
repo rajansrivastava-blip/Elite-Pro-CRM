@@ -18,6 +18,19 @@ import {
   FileText
 } from "lucide-react";
 
+
+const sanitizeDateForInput = (dateStr: string): string => {
+  if (!dateStr) return "";
+  const match = dateStr.match(/^\d{4}-\d{2}-\d{2}$/);
+  return match ? dateStr : "";
+};
+
+const sanitizeTimeForInput = (timeStr: string): string => {
+  if (!timeStr) return "";
+  const match = timeStr.match(/^\d{2}:\d{2}$/);
+  return match ? timeStr : "";
+};
+
 interface AppointmentsListProps {
   appointments: Appointment[];
   leads: Lead[];
@@ -1014,7 +1027,7 @@ export default function AppointmentsList({
                   <input
                     id="appt-date"
                     type="date"
-                    value={newAppForm.date}
+                    value={sanitizeDateForInput(newAppForm.date)}
                     onChange={(e) => setNewAppForm({ ...newAppForm, date: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white font-mono" : "bg-slate-50 border-slate-200"}`}
@@ -1026,7 +1039,7 @@ export default function AppointmentsList({
                   <input
                     id="appt-time"
                     type="time"
-                    value={newAppForm.time}
+                    value={sanitizeTimeForInput(newAppForm.time)}
                     onChange={(e) => setNewAppForm({ ...newAppForm, time: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white font-mono" : "bg-slate-50 border-slate-200"}`}
@@ -1139,7 +1152,7 @@ export default function AppointmentsList({
                   id="edit-appt-title"
                   required
                   type="text"
-                  value={editingApp.title}
+                  value={editingApp.title || ""}
                   onChange={(e) => setEditingApp({ ...editingApp, title: e.target.value })}
                   className={`w-full px-3 py-2 text-xs rounded-lg border 
                     ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -1153,7 +1166,7 @@ export default function AppointmentsList({
                     id="edit-appt-date"
                     required
                     type="date"
-                    value={editingApp.date}
+                    value={sanitizeDateForInput(editingApp.date || "")}
                     onChange={(e) => setEditingApp({ ...editingApp, date: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -1166,7 +1179,7 @@ export default function AppointmentsList({
                     id="edit-appt-time"
                     required
                     type="time"
-                    value={editingApp.time}
+                    value={sanitizeTimeForInput(editingApp.time || "")}
                     onChange={(e) => setEditingApp({ ...editingApp, time: e.target.value })}
                     className={`w-full px-3 py-2 text-xs rounded-lg border 
                       ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}
@@ -1210,7 +1223,7 @@ export default function AppointmentsList({
                 <textarea
                   id="edit-appt-notes"
                   rows={3}
-                  value={editingApp.notes}
+                  value={editingApp.notes || ""}
                   onChange={(e) => setEditingApp({ ...editingApp, notes: e.target.value })}
                   className={`w-full px-3 py-2 text-xs rounded-lg border 
                     ${darkMode ? "bg-slate-950 border-slate-800 text-white" : "bg-slate-50 border-slate-200"}`}

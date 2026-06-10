@@ -452,12 +452,12 @@ export default function App() {
     const initializeCrmAndSync = async () => {
       try {
         // One-time client clean slate setup to match only-data-storage directive
-        if (!localStorage.getItem("elite_pro_sterile_reset_v2")) {
+        if (!localStorage.getItem("elite_pro_sterile_reset_v3")) {
           localStorage.removeItem("elite_pro_leads");
           localStorage.removeItem("elite_pro_appointments");
           localStorage.removeItem("elite_pro_communication_logs");
           localStorage.removeItem("elite_pro_lead_edit_logs");
-          localStorage.setItem("elite_pro_sterile_reset_v2", "true");
+          localStorage.setItem("elite_pro_sterile_reset_v3", "true");
           
           setLeads([]);
           setAppointments([]);
@@ -696,7 +696,7 @@ export default function App() {
           } else if (type === "transfer") {
             await clientSupabase.from("lead_edit_logs").delete().in("editor_name", ["System Auto-Transfer Agent", "System Auto-Reassigner"]);
           } else if (type === "edit") {
-            await clientSupabase.from("lead_edit_logs").delete().not("editor_name", "in", '("System Auto-Transfer Agent", "System Auto-Reassigner")');
+            await clientSupabase.from("lead_edit_logs").delete().not("editor_name", "eq", "System Auto-Transfer Agent").not("editor_name", "eq", "System Auto-Reassigner");
           }
         }
       }
@@ -793,6 +793,15 @@ export default function App() {
       return;
     }
 
+    // Duplicate verification filter for manual single lead addition
+    if (isDuplicateLead(newLead, leads)) {
+      triggerAlert(
+        "Duplicate Lead Warning",
+        `A lead with the same name, email, or phone number already exists in your CRM directory.`
+      );
+      return;
+    }
+
     const id = "lead-" + (leads.length + 1) + "-" + Math.random().toString(36).substr(2, 4);
     const createdDate = new Date().toISOString().split("T")[0];
     
@@ -814,6 +823,7 @@ export default function App() {
       createdById: currentUser?.id,
       createdByUserRole: currentUser?.role,
     };
+    leadsRef.current = [item, ...leadsRef.current];
     setLeads(prev => [item, ...prev]);
 
     // Create a notification for the assignee about this new lead assignment
@@ -931,10 +941,10 @@ export default function App() {
     const tomorrowStr = tomorrow.toISOString().split("T")[0];
     const nowTimestamp = Date.now();
 
-    // Secondary deep verification filters for absolute duplicate safety
+    // Secondary deep verification filters for absolute duplicate safety using up-to-date ref state
     const uniqueNewLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] = [];
     newLeads.forEach(nl => {
-      const isDupInCrm = isDuplicateLead(nl, leads);
+      const isDupInCrm = isDuplicateLead(nl, leadsRef.current || []);
       const isDupInBatch = isDuplicateLead(nl, uniqueNewLeads);
       if (!isDupInCrm && !isDupInBatch) {
         uniqueNewLeads.push(nl);
@@ -981,6 +991,7 @@ export default function App() {
       newAppts.push(automaticAppt);
     });
 
+    leadsRef.current = [...newItems, ...leadsRef.current];
     setLeads(prev => [...newItems, ...prev]);
     setAppointments(prev => [...newAppts, ...prev]);
 
@@ -1066,9 +1077,24 @@ export default function App() {
     autoSheetsSyncRef.current = autoSheetsSync;
   }, [autoSheetsSync]);
 
+  const crmDataLoadedRef = useRef(crmDataLoaded);
+  useEffect(() => {
+    crmDataLoadedRef.current = crmDataLoaded;
+  }, [crmDataLoaded]);
+
+  const isSyncingSheetsRef = useRef(false);
+
   // Background Google Sheets Synchronization Loop
   useEffect(() => {
     const runSheetsBackgroundSync = async () => {
+      // Prevents concurrent sync loops or attempts when CRM data is still loading
+      if (!crmDataLoadedRef.current) {
+        return;
+      }
+      if (isSyncingSheetsRef.current) {
+        return;
+      }
+
       // Security check: Only trigger background sync for Admins or Super Admins
       const u = currentUserRef.current;
       if (!u || (u.role !== "super_admin" && u.role !== "admin")) {
@@ -1081,6 +1107,7 @@ export default function App() {
       const token = sessionStorage.getItem("google_sheets_token") || undefined;
 
       if (isAuto && sheetUrlVal) {
+        isSyncingSheetsRef.current = true;
         try {
           const { fetchGoogleSheetValues, mapSpreadsheetRowsToLeads, isDuplicateLead } = await import("./googleAuth");
           const rows = await fetchGoogleSheetValues(sheetUrlVal, sheetRangeVal, token);
@@ -1097,12 +1124,14 @@ export default function App() {
                 const updatedTime = new Date().toLocaleTimeString("en-US", { hour12: true }) + " (Local)";
                 setLastSheetsSynced(updatedTime);
                 localStorage.setItem("google_sheets_last_sync_time", updatedTime);
-                console.log(`[Google Sheets Auto-Sync] Automatically synchronized ${filteredNewLeads.length} new leads assigned to Admin.`);
+                console.log(`[Google Sheets Auto-Sync] Automatically synchronized ${filteredNewLeads.length} new leads.`);
               }
             }
           }
         } catch (err) {
           console.warn("[Google Sheets Background-Sync Interrupted]:", err);
+        } finally {
+          isSyncingSheetsRef.current = false;
         }
       }
     };
@@ -1205,11 +1234,11 @@ export default function App() {
     }
   }, [users]);
 
-  // Background monitoring for 5-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
+  // Background monitoring for 30-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
   useEffect(() => {
     const checkAndReassignLeads = () => {
       const now = Date.now();
-      const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
+      const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in milliseconds
       
       let wasUpdated = false;
       let newNotifications: AppNotification[] = [];
@@ -1279,8 +1308,8 @@ export default function App() {
             new Date(lead.dateUpdated || lead.dateCreated).getTime() || 0
           );
           
-          if (referenceTime === 0 || now - referenceTime < fiveMinutes) {
-            return lead; // 5 minutes has not passed yet or no valid reference time
+          if (referenceTime === 0 || now - referenceTime < thirtyMinutes) {
+            return lead; // 30 minutes has not passed yet or no valid reference time
           }
           
           // Get all members of the same role (team_leader or sales_team) for Round Robin distribution
@@ -1303,7 +1332,7 @@ export default function App() {
           
           // Create activity log message and notifications
           const currentRoleLabel = poolRole === "team_leader" ? "Team Leader" : "Sales Advisor";
-          const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 5 minutes while status remained 'New Lead'.`;
+          const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 30 minutes while status remained 'New Lead'.`;
           
           const newEditLog: LeadEditLog = {
             id: "edit-log-auto-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
@@ -1327,7 +1356,7 @@ export default function App() {
             id: "notif-prev-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
             recipientName: currentAgent,
             title: "Lead Transferred Out (Inactivity)",
-            message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 5 minutes.`,
+            message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 30 minutes.`,
             timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
             isRead: false,
             type: "update",
@@ -1351,7 +1380,7 @@ export default function App() {
             id: "notif-admin-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
             recipientName: "Admin",
             title: "System Auto-Reassignment",
-            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (5-min inactivity).`,
+            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (30-min inactivity).`,
             timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
             isRead: false,
             type: "update",
@@ -1374,9 +1403,9 @@ export default function App() {
 
         // 2) Rule B: New 48-hour random auto-transfer rule for "Not Pick" and "Switched Off" statuses
         if (lead.status === "Not Pick" || lead.status === "Switched Off") {
-          const createdTime = new Date(lead.dateCreated).getTime();
+          const transferTime = lead.reassignedTimestamp || lead.assignmentTimestamp || new Date(lead.dateCreated).getTime();
           const fortyEightHours = 48 * 60 * 60 * 1000;
-          if (isNaN(createdTime) || now - createdTime < fortyEightHours) {
+          if (isNaN(transferTime) || now - transferTime < fortyEightHours) {
             return lead;
           }
 
@@ -1394,7 +1423,7 @@ export default function App() {
 
           wasUpdated = true;
 
-          const activityMsg = `Lead automatically reassigned randomly to ${nextTeammate.name} from ${currentAgent} because it remained in '${lead.status}' status for more than 48 hours since creation.`;
+          const activityMsg = `Lead automatically reassigned randomly to ${nextTeammate.name} from ${currentAgent} because it remained in '${lead.status}' status for more than 48 hours since last assignment/transfer.`;
 
           const newEditLog: LeadEditLog = {
             id: "edit-log-auto-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
@@ -1430,7 +1459,7 @@ export default function App() {
             id: "notif-next-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
             recipientName: nextTeammate.name,
             title: "Random 48h Lead Assignment",
-            message: `Lead "${lead.name}" has been randomly assigned to you because previous agent marked as "${lead.status}" for over 48h since creation.`,
+            message: `Lead "${lead.name}" has been randomly assigned to you because previous agent marked as "${lead.status}" for over 48h since last transfer.`,
             timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
             isRead: false,
             type: "assignment",

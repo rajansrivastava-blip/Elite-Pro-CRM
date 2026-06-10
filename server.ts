@@ -447,41 +447,44 @@ app.post("/api/webhooks/meta-ads", async (req, res) => {
     // 1. Try writing directly to Supabase if connection exists
     let savedToSupabase = false;
     let supabaseErr = null;
+    const dbPayload = {
+      id: newLead.id,
+      name: newLead.name,
+      company: newLead.company,
+      position: newLead.position,
+      email: newLead.email,
+      phone: newLead.phone,
+      source: newLead.source,
+      status: newLead.status,
+      temperature: newLead.temperature,
+      budget: newLead.budget,
+      location: newLead.location,
+      assigned_agent: newLead.assignedAgent,
+      notes: newLead.notes,
+      project_name: newLead.projectName,
+      date_created: newLead.dateCreated,
+      date_updated: newLead.dateUpdated,
+      last_communication: newLead.lastCommunication,
+      score: newLead.score
+    };
+
     try {
-      const dbPayload = {
-        id: newLead.id,
-        name: newLead.name,
-        company: newLead.company,
-        position: newLead.position,
-        email: newLead.email,
-        phone: newLead.phone,
-        source: newLead.source,
-        status: newLead.status,
-        temperature: newLead.temperature,
-        budget: newLead.budget,
-        location: newLead.location,
-        assigned_agent: newLead.assignedAgent,
-        notes: newLead.notes,
-        project_name: newLead.projectName,
-        date_created: newLead.dateCreated,
-        date_updated: newLead.dateUpdated,
-        last_communication: newLead.lastCommunication,
-        score: newLead.score
-      };
-      
-      const { error } = await supabase.from("leads").upsert(dbPayload);
-      if (!error) {
+      const { success, error } = await resilientUpsert("leads", dbPayload);
+      if (success) {
         savedToSupabase = true;
+        newLead.id = dbPayload.id; // Align ID if it was resolved to/merged with an existing record
       } else {
-        supabaseErr = error.message;
+        supabaseErr = error?.message || "Upsert lead failed";
       }
     } catch (e: any) {
       supabaseErr = e.message || String(e);
     }
 
-    // 2. Append to local file-based retrieval cache so the React client can immediately ingest it upon checking
-    metaLeadsCache.push(newLead);
-    saveMetaLeadsCache();
+    // 2. Append to local file-based retrieval cache only if it's NOT a duplicate (meaning we didn't change its newly generated random ID)
+    if (newLead.id.startsWith("lead-meta-")) {
+      metaLeadsCache.push(newLead);
+      saveMetaLeadsCache();
+    }
 
     // 3. Update sync timestamps in configuration
     try {
@@ -561,6 +564,87 @@ app.get("/api/db/status", async (req, res) => {
 // Helper for resilient database upserts, ignoring columns that do not exist on the target Supabase table
 async function resilientUpsert(tableName: string, payload: any): Promise<{ success: boolean; error?: any }> {
   let currentPayload = JSON.parse(JSON.stringify(payload));
+  
+  if (tableName === "leads" && currentPayload) {
+    try {
+      const { data: existingDbLeads } = await supabase.from("leads").select("id, name, email, phone");
+      if (existingDbLeads && existingDbLeads.length > 0) {
+        const getDigits = (p?: string) => {
+          if (!p) return "";
+          const digits = String(p).replace(/\D/g, "");
+          if (digits.length === 12 && digits.startsWith("91")) {
+            return digits.substring(2);
+          }
+          if (digits.length === 11 && digits.startsWith("0")) {
+            return digits.substring(1);
+          }
+          return digits;
+        };
+
+        const getCleanEmail = (e?: string) => {
+          if (!e) return "";
+          const clean = String(e).toLowerCase().trim();
+          if (
+            clean === "n/a" ||
+            clean === "noemail" ||
+            clean === "not available" ||
+            clean === "none" ||
+            clean === "null" ||
+            clean.includes("example.com")
+          ) {
+            return "";
+          }
+          return clean;
+        };
+
+        const getCleanName = (n: string) => {
+          return (n || "").toLowerCase().replace(/\s+/g, " ").trim();
+        };
+
+        const checkAndAlignLead = (lead: any) => {
+          if (!lead) return;
+          const nlName = getCleanName(lead.name);
+          const nlEmail = getCleanEmail(lead.email);
+          const nlPhone = getDigits(lead.phone);
+
+          const matched = existingDbLeads.find((l: any) => {
+            const lName = getCleanName(l.name);
+            const lEmail = getCleanEmail(l.email);
+            const lPhone = getDigits(l.phone);
+
+            if (nlPhone && lPhone && nlPhone.length >= 7 && lPhone.length >= 7) {
+              if (nlPhone === lPhone || nlPhone.endsWith(lPhone) || lPhone.endsWith(nlPhone)) {
+                return true;
+              }
+            }
+            if (nlEmail && lEmail) {
+              if (nlEmail === lEmail) {
+                return true;
+              }
+            }
+            if (nlName && lName && nlName === lName) {
+              return true;
+            }
+            return false;
+          });
+
+          if (matched) {
+            // Found duplicate - reuse original ID to update instead of duplicate inserting
+            lead.id = matched.id;
+          }
+        };
+
+        if (Array.isArray(currentPayload)) {
+          currentPayload.forEach(checkAndAlignLead);
+        } else {
+          checkAndAlignLead(currentPayload);
+        }
+      }
+    } catch (e) {
+      console.warn("[resilientUpsert] Supabase pre-save duplicate check failed:", e);
+    }
+  }
+
   const removedColumns = new Set<string>();
   
   while (true) {
