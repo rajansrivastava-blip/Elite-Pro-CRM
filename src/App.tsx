@@ -1082,6 +1082,26 @@ export default function App() {
     crmDataLoadedRef.current = crmDataLoaded;
   }, [crmDataLoaded]);
 
+  const appointmentsRef = useRef(appointments);
+  useEffect(() => {
+    appointmentsRef.current = appointments;
+  }, [appointments]);
+
+  const communicationLogsRef = useRef(communicationLogs);
+  useEffect(() => {
+    communicationLogsRef.current = communicationLogs;
+  }, [communicationLogs]);
+
+  const leadEditLogsRef = useRef(leadEditLogs);
+  useEffect(() => {
+    leadEditLogsRef.current = leadEditLogs;
+  }, [leadEditLogs]);
+
+  const isAutoSyncEnabledRef = useRef(isAutoSyncEnabled);
+  useEffect(() => {
+    isAutoSyncEnabledRef.current = isAutoSyncEnabled;
+  }, [isAutoSyncEnabled]);
+
   const isSyncingSheetsRef = useRef(false);
 
   // Background Google Sheets Synchronization Loop
@@ -1209,6 +1229,128 @@ export default function App() {
 
     // run sync every 15 seconds for snappier real-time experience
     const intervalId = setInterval(runMetaBackgroundSync, 15000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  // Real-time Background Sync Loop for Supabase Cloud Database Tables
+  useEffect(() => {
+    let isFetching = false;
+
+    const runSupabaseRealtimeSync = async () => {
+      // 1. Guard check: only run if CRM data is loaded, and auto-sync is enabled
+      if (!crmDataLoadedRef.current || !isAutoSyncEnabledRef.current) {
+        return;
+      }
+      if (isFetching) {
+        return;
+      }
+
+      isFetching = true;
+      try {
+        const res = await pullSupabaseData();
+        if (res.errors && res.errors.length > 0) {
+          // If there is any connection error, log and return silently
+          console.warn("[Realtime Sync Warning]:", res.errors.join(", "));
+          isFetching = false;
+          return;
+        }
+
+        // Compare and update leads
+        if (res.leads) {
+          // Filter out duplicates just in case
+          const uniquePulled: Lead[] = [];
+          res.leads.forEach(l => {
+            if (!uniquePulled.some(item => item.id === l.id)) {
+              uniquePulled.push(l);
+            }
+          });
+
+          // Check if different from leadsRef.current
+          const currentLeads = leadsRef.current || [];
+          const sortedA = [...uniquePulled].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const sortedB = [...currentLeads].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const isLeadsDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
+
+          if (isLeadsDifferent) {
+            console.log("[Realtime Sync] Merging real-time lead updates from Supabase.");
+            setLeads(uniquePulled);
+            localStorage.setItem("elite_pro_leads", JSON.stringify(uniquePulled));
+          }
+        }
+
+        // Compare and update users
+        if (res.users) {
+          const currentUsers = usersRef.current || [];
+          const sortedA = [...res.users].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const sortedB = [...currentUsers].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const isUsersDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
+
+          if (isUsersDifferent) {
+            setUsers(prev => {
+              const merged = [...res.users!];
+              prev.forEach(localUser => {
+                const matchedIdx = merged.findIndex(u => u.id === localUser.id || String(u.email).toLowerCase() === String(localUser.email).toLowerCase());
+                if (matchedIdx >= 0) {
+                  if (!merged[matchedIdx].password && localUser.password) {
+                    merged[matchedIdx].password = localUser.password;
+                  }
+                } else {
+                  merged.push(localUser);
+                }
+              });
+              return merged;
+            });
+          }
+        }
+
+        // Compare and update appointments
+        if (res.appointments) {
+          const currentAppts = appointmentsRef.current || [];
+          const sortedA = [...res.appointments].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const sortedB = [...currentAppts].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const isApptsDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
+
+          if (isApptsDifferent) {
+            setAppointments(res.appointments);
+            localStorage.setItem("elite_pro_appointments", JSON.stringify(res.appointments));
+          }
+        }
+
+        // Compare and update communication logs
+        if (res.communicationLogs) {
+          const currentLogs = communicationLogsRef.current || [];
+          const sortedA = [...res.communicationLogs].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const sortedB = [...currentLogs].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const isCommsDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
+
+          if (isCommsDifferent) {
+            setCommunicationLogs(res.communicationLogs);
+            localStorage.setItem("elite_pro_communication_logs", JSON.stringify(res.communicationLogs));
+          }
+        }
+
+        // Compare and update edit logs
+        if (res.leadEditLogs) {
+          const currentEdits = leadEditLogsRef.current || [];
+          const sortedA = [...res.leadEditLogs].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const sortedB = [...currentEdits].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const isEditsDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
+
+          if (isEditsDifferent) {
+            setLeadEditLogs(res.leadEditLogs);
+            localStorage.setItem("elite_pro_lead_edit_logs", JSON.stringify(res.leadEditLogs));
+          }
+        }
+
+      } catch (err) {
+        console.warn("[Realtime Sync Interrupted]:", err);
+      } finally {
+        isFetching = false;
+      }
+    };
+
+    // run sync regularly every 5 seconds for a snappy real-time experience
+    const intervalId = setInterval(runSupabaseRealtimeSync, 5000);
     return () => clearInterval(intervalId);
   }, []);
 
