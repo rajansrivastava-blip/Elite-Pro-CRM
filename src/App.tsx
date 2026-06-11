@@ -1103,6 +1103,7 @@ export default function App() {
   }, [isAutoSyncEnabled]);
 
   const isSyncingSheetsRef = useRef(false);
+  const lastLocalUpdateRef = useRef<Record<string, number>>({});
 
   // Background Google Sheets Synchronization Loop
   useEffect(() => {
@@ -1265,16 +1266,31 @@ export default function App() {
             }
           });
 
-          // Check if different from leadsRef.current
+          // Handled transition lock logic: if local update happened key-wise < 10 seconds ago,
+          // maintain local values to allow database writes to finish and sync properly,
+          // preventing race condition state flipping or defaults back to old status.
           const currentLeads = leadsRef.current || [];
-          const sortedA = [...uniquePulled].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          const nowTime = Date.now();
+          const uniquePulledHandled = uniquePulled.map(l => {
+            const lastLocalTime = lastLocalUpdateRef.current[l.id];
+            if (lastLocalTime && nowTime - lastLocalTime < 10000) {
+              const localLead = currentLeads.find(cl => cl.id === l.id);
+              if (localLead) {
+                return localLead;
+              }
+            }
+            return l;
+          });
+
+          // Check if different from leadsRef.current
+          const sortedA = [...uniquePulledHandled].sort((x, y) => String(x.id).localeCompare(String(y.id)));
           const sortedB = [...currentLeads].sort((x, y) => String(x.id).localeCompare(String(y.id)));
           const isLeadsDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
 
           if (isLeadsDifferent) {
-            console.log("[Realtime Sync] Merging real-time lead updates from Supabase.");
-            setLeads(uniquePulled);
-            localStorage.setItem("elite_pro_leads", JSON.stringify(uniquePulled));
+            console.log("[Realtime Sync] Merging real-time lead updates from Supabase with write-lock safety.");
+            setLeads(uniquePulledHandled);
+            localStorage.setItem("elite_pro_leads", JSON.stringify(uniquePulledHandled));
           }
         }
 
@@ -1665,6 +1681,8 @@ export default function App() {
 
   // Handler: Update Lead
   const handleUpdateLead = async (updated: Lead) => {
+    // Record local change timestamp to prevent real-time sync overwrites for 10 seconds
+    lastLocalUpdateRef.current[updated.id] = Date.now();
     const oldLead = leads.find(l => l.id === updated.id);
     let newLog: LeadEditLog | null = null;
     let finalUpdated = { ...updated };

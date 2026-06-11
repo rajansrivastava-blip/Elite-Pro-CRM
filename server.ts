@@ -628,7 +628,7 @@ async function resilientUpsert(tableName: string, payload: any): Promise<{ succe
             return false;
           });
 
-          if (matched) {
+          if (matched && !existingDbLeads.some((l: any) => l.id === lead.id)) {
             // Found duplicate - reuse original ID to update instead of duplicate inserting
             lead.id = matched.id;
           }

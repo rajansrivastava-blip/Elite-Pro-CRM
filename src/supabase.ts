@@ -1,4 +1,4 @@
-import { User, Lead, Appointment, CommunicationLog, LeadEditLog } from "./types";
+import { User, Lead, Appointment, CommunicationLog, LeadEditLog, LeadStatus } from "./types";
 import { createClient } from "@supabase/supabase-js";
 
 // ==========================================
@@ -88,6 +88,28 @@ export function mapUserToDb(user: User): any {
   };
 }
 
+export function mapStatusFromDb(dbStatus: string): LeadStatus {
+  if (!dbStatus) return "New Lead";
+  const statusStr = String(dbStatus).trim();
+  const lower = statusStr.toLowerCase();
+
+  if (lower === "new") return "New Lead";
+  if (lower === "contacted") return "Interested";
+  if (lower === "qualified") return "Follow Up";
+  if (lower === "proposal") return "Detailed Share";
+  if (lower === "closed_won") return "Closed Client";
+  if (lower === "closed_lost") return "Not Interested";
+
+  const list: LeadStatus[] = [
+    "Interested", "Follow Up", "Detailed Share", "Not Interested", "Meeting Done",
+    "Site Visit", "Call Back", "Junk", "Duplicate", "Not Pick", "New Lead",
+    "Closed Client", "Switched Off", "Low Budget"
+  ];
+
+  const matched = list.find(s => s.toLowerCase() === lower);
+  return matched || (statusStr as LeadStatus);
+}
+
 export function mapLeadFromDb(row: any): Lead {
   return {
     id: row.id,
@@ -97,7 +119,7 @@ export function mapLeadFromDb(row: any): Lead {
     email: row.email,
     phone: row.phone,
     source: row.source,
-    status: row.status,
+    status: mapStatusFromDb(row.status),
     temperature: row.temperature,
     budget: row.budget,
     location: row.location,
