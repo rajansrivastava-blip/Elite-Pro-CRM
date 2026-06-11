@@ -250,7 +250,7 @@ async function resilientClientUpsert(tableName: string, payload: any): Promise<{
   while (true) {
     const options: any = {};
     if (["users", "leads", "appointments"].includes(tableName)) {
-      options.ignoreDuplicates = true;
+      options.ignoreDuplicates = false;
       options.onConflict = "id";
     }
     const { error } = await clientSupabase.from(tableName).upsert(currentPayload, options);
