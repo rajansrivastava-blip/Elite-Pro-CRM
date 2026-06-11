@@ -675,6 +675,7 @@ export default function LeadPipeline({
     const list = leads.filter(lead => {
       const matchesSearch = 
         lead.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (lead.phone || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
         (lead.company || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
         lead.source.toLowerCase().includes(searchTerm.toLowerCase()) ||
         lead.assignedAgent.toLowerCase().includes(searchTerm.toLowerCase());
@@ -1143,7 +1144,7 @@ export default function LeadPipeline({
             <input
               id="lead-search-input"
               type="text"
-              placeholder="Search Name, Company, Assignee..."
+              placeholder="Search Name, Phone, Company, Assignee..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className={`w-full pl-10 pr-4 py-2.5 text-xs rounded-xl border font-sans font-medium transition duration-200
