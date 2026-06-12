@@ -133,6 +133,8 @@ export default function App() {
     return saved ? JSON.parse(saved) : null; // Starts logged out for realistic, robust role-based access testing
   });
 
+  const [deactivatedError, setDeactivatedError] = useState<string>("");
+
   // User Directory State
   const [users, setUsers] = useState<User[]>(() => {
     const saved = localStorage.getItem("elite_pro_users");
@@ -722,7 +724,7 @@ export default function App() {
     if (currentUser) {
       const match = users.find(u => u.id === currentUser.id || u.email.toLowerCase() === currentUser.email.toLowerCase());
       if (match && match.active === false) {
-        alert("Your account has been deactivated by an Administrator. Logging out.");
+        setDeactivatedError("Access Denied: Your account has been deactivated by an Administrator.");
         setCurrentUser(null);
         localStorage.removeItem("elite_pro_current_user");
       }
@@ -1419,25 +1421,32 @@ export default function App() {
         // Compare and update users
         if (res.users) {
           const currentUsers = usersRef.current || [];
-          const sortedA = [...res.users].sort((x, y) => String(x.id).localeCompare(String(y.id)));
+          
+          // Merge remote users with local-only fields
+          const mergedUsers = res.users.map(remoteUser => {
+            const localUser = currentUsers.find(u => u.id === remoteUser.id || String(u.email).toLowerCase() === String(remoteUser.email).toLowerCase());
+            return {
+              ...remoteUser,
+              // If remote active is undefined (column missing on remote DB), preserve local active state
+              active: remoteUser.active === undefined && localUser ? localUser.active : remoteUser.active,
+              password: remoteUser.password || (localUser ? localUser.password : undefined)
+            };
+          });
+
+          // Add any local-only users not in remote DB
+          currentUsers.forEach(localUser => {
+            const hasRemote = mergedUsers.some(u => u.id === localUser.id || String(u.email).toLowerCase() === String(localUser.email).toLowerCase());
+            if (!hasRemote) {
+              mergedUsers.push(localUser);
+            }
+          });
+
+          const sortedA = [...mergedUsers].sort((x, y) => String(x.id).localeCompare(String(y.id)));
           const sortedB = [...currentUsers].sort((x, y) => String(x.id).localeCompare(String(y.id)));
           const isUsersDifferent = JSON.stringify(sortedA) !== JSON.stringify(sortedB);
 
           if (isUsersDifferent) {
-            setUsers(prev => {
-              const merged = [...res.users!];
-              prev.forEach(localUser => {
-                const matchedIdx = merged.findIndex(u => u.id === localUser.id || String(u.email).toLowerCase() === String(localUser.email).toLowerCase());
-                if (matchedIdx >= 0) {
-                  if (!merged[matchedIdx].password && localUser.password) {
-                    merged[matchedIdx].password = localUser.password;
-                  }
-                } else {
-                  merged.push(localUser);
-                }
-              });
-              return merged;
-            });
+            setUsers(mergedUsers);
           }
         }
 
@@ -1559,6 +1568,7 @@ export default function App() {
         if (inPreset) return true;
         return (users || []).some(u => {
           if (u.role !== "sales_team" && u.role !== "team_leader") return false;
+          if (u.active === false) return false;
           const uParts = getNormalizedParts(u.name);
           return parts.some(p => uParts.includes(p)) || uParts.some(p => parts.includes(p));
         });
@@ -1595,7 +1605,8 @@ export default function App() {
           const poolRole = currentAssignee.role;
           const sameRolePool = users.filter(u => 
             u.role === poolRole && 
-            isNameInAllowedList(u.name)
+            isNameInAllowedList(u.name) &&
+            u.active !== false
           );
           if (sameRolePool.length <= 1) return lead; // No other user of this role in the allowed list to transfer to
           
@@ -1692,7 +1703,8 @@ export default function App() {
           const salesPool = users.filter(u => 
             u.role === "sales_team" && 
             isNameInAllowedList(u.name) &&
-            u.name.toLowerCase() !== (currentAgent || "").toLowerCase()
+            u.name.toLowerCase() !== (currentAgent || "").toLowerCase() &&
+            u.active !== false
           );
 
           if (salesPool.length === 0) return lead; // No other sales team member to transfer to
@@ -2460,11 +2472,13 @@ export default function App() {
       <LoginPortal 
         users={users}
         onLoginSuccess={(user) => {
+          setDeactivatedError("");
           setCurrentUser(user);
           // Auto route to lead pipeline or dashboard
           setCurrentTab("dashboard");
         }}
         darkMode={darkMode}
+        initialError={deactivatedError}
       />
     );
   }
@@ -2763,7 +2777,10 @@ export default function App() {
                 <button
                   id="modal-dismiss-btn"
                   onClick={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
-                  className="w-full py-2.5 rounded-xl text-xs font-bold text-white bg-slate-850 hover:bg-slate-800 transition cursor-pointer select-none active:scale-97 shadow-sm"
+                  className={`w-full py-2.5 rounded-xl text-xs font-bold transition cursor-pointer select-none active:scale-97 shadow-sm
+                    ${darkMode 
+                      ? "bg-slate-800 text-slate-100 hover:bg-slate-700" 
+                      : "bg-slate-900 text-white hover:bg-slate-800"}`}
                 >
                   Acknowledge
                 </button>

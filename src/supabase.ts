@@ -69,7 +69,7 @@ export function mapUserFromDb(row: any): User {
     department: row.department,
     password: row.password,
     teamLeaderId: row.team_leader_id,
-    active: row.active === undefined ? true : !!row.active
+    active: row.active === undefined ? undefined : !!row.active
   };
 }
 

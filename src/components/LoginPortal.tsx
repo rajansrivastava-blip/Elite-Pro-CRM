@@ -24,6 +24,7 @@ interface LoginPortalProps {
   users?: User[];
   onLoginSuccess: (user: User) => void;
   darkMode: boolean;
+  initialError?: string;
 }
 
 function getAvatarIdForRole(role: UserRole): string {
@@ -40,7 +41,7 @@ function getAvatarIdForRole(role: UserRole): string {
   }
 }
 
-export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, darkMode }: LoginPortalProps) {
+export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, darkMode, initialError = "" }: LoginPortalProps) {
   const mode = "login" as "login" | "signup";
   const [selectedPresetId, setSelectedPresetId] = useState<string>("");
   
@@ -52,7 +53,13 @@ export default function LoginPortal({ users = PRESET_USERS, onLoginSuccess, dark
   const [departmentInput, setDepartmentInput] = useState<string>("Sales Advisory");
   
   // Feedback structures
-  const [errorText, setErrorText] = useState<string>("");
+  const [errorText, setErrorText] = useState<string>(initialError);
+
+  useEffect(() => {
+    if (initialError) {
+      setErrorText(initialError);
+    }
+  }, [initialError]);
   const [successFeedback, setSuccessFeedback] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [supabaseConnected, setSupabaseConnected] = useState<boolean>(false);
