@@ -1468,9 +1468,11 @@ export default function App() {
     }
   }, [users, leads]);
 
-  // Background monitoring for 60-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
+  // Background monitoring for 60-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off (STOPPED per user request)
   useEffect(() => {
     const checkAndReassignLeads = () => {
+      // Stopped automatically lead transfer as requested by the user
+      return;
       const now = Date.now();
       const sixtyMinutes = 60 * 60 * 1000; // 60 minutes in milliseconds
       

@@ -1709,7 +1709,7 @@ export default function LeadPipeline({
                 Lead Inactivity Auto-Transfer History Ledger
               </h3>
               <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                Real-time security auditing trail of auto-generated reassignments due to 60-minute inactivity rules
+                Real-time auditing trail of automatic reassignments (Note: Auto-transfer rules are currently stopped/disabled)
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1848,7 +1848,7 @@ export default function LeadPipeline({
             </div>
           ) : (
             <div className="py-12 text-center text-slate-400">
-              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 60 minutes.
+              No automatic transfer logs captured. Auto-transfer rules are currently stopped/disabled in the system.
             </div>
           )}
         </div>
@@ -1989,45 +1989,15 @@ export default function LeadPipeline({
                       {lead.status || "(Select Status)"}
                     </span>
                     {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && (
-                      <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
-                        <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
-                        {(() => {
-                          const elapsed = Date.now() - (lead.lastActionTimestamp || lead.assignmentTimestamp || 0);
-                          const remaining = Math.max(0, 60 * 60 * 1000 - elapsed);
-                          const minutes = Math.floor(remaining / 60000);
-                          const seconds = Math.floor((remaining % 60000) / 1000);
-                          return `Transfer in ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
-                        })()}
+                      <span className="text-[9px] font-mono text-slate-400 font-semibold px-2 py-0.5 bg-slate-500/10 border border-slate-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                        <Clock size={10} className="text-slate-400" />
+                        Transfer: Stopped
                       </span>
                     )}
                     {(lead.status === "Not Pick" || lead.status === "Switched Off") && isAgentEligibleForTransfer(lead.assignedAgent) && (
-                      <span className="text-[9px] font-mono text-amber-500 font-semibold px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap animate-pulse">
-                        <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
-                        {(() => {
-                          let baseTime = lead.reassignedTimestamp || lead.assignmentTimestamp || 0;
-                          if (baseTime === 0 && lead.dateCreated) {
-                            const dateParts = lead.dateCreated.split("-");
-                            if (dateParts.length === 3) {
-                              const year = parseInt(dateParts[0], 10);
-                              const month = parseInt(dateParts[1], 10) - 1;
-                              const day = parseInt(dateParts[2], 10);
-                              const parsed = new Date(year, month, day);
-                              if (!isNaN(parsed.getTime())) {
-                                baseTime = parsed.getTime();
-                              }
-                            }
-                          }
-                          if (baseTime === 0) {
-                            baseTime = Date.now();
-                          }
-                          const fortyEightHours = 48 * 60 * 60 * 1000;
-                          const elapsed = Date.now() - baseTime;
-                          const remaining = Math.max(0, fortyEightHours - elapsed);
-                          const hours = Math.floor(remaining / 3600000);
-                          const minutes = Math.floor((remaining % 3600000) / 60000);
-                          const seconds = Math.floor((remaining % 60000) / 1000);
-                          return `Transfer in ${hours}h ${minutes}m ${seconds}s`;
-                        })()}
+                      <span className="text-[9px] font-mono text-slate-400 font-semibold px-2 py-0.5 bg-slate-500/10 border border-slate-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                        <Clock size={10} className="text-slate-400" />
+                        Transfer: Stopped
                       </span>
                     )}
                     <div className="text-[10px] font-mono font-medium">
