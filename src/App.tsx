@@ -970,9 +970,9 @@ export default function App() {
         id,
         dateCreated: createdDate,
         dateUpdated: createdDate,
-        assignmentTimestamp: nl.assignedAgent ? nowTimestamp : undefined,
+        assignmentTimestamp: nowTimestamp,
         assignedTlId: assignedUser ? assignedUser.id : undefined,
-        lastActionTimestamp: nl.assignedAgent ? nowTimestamp : undefined,
+        lastActionTimestamp: nowTimestamp,
       };
       newItems.push(item);
 
@@ -1392,11 +1392,11 @@ export default function App() {
     }
   }, [users]);
 
-  // Background monitoring for 30-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
+  // Background monitoring for 60-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
   useEffect(() => {
     const checkAndReassignLeads = () => {
       const now = Date.now();
-      const thirtyMinutes = 30 * 60 * 1000; // 30 minutes in milliseconds
+      const sixtyMinutes = 60 * 60 * 1000; // 60 minutes in milliseconds
       
       let wasUpdated = false;
       let newNotifications: AppNotification[] = [];
@@ -1452,7 +1452,7 @@ export default function App() {
           return nameMatches && (u.role === "team_leader" || u.role === "sales_team");
         });
 
-        // 1) Rule A: Existing 30-minute idle auto-transfer rule for "New Lead" status
+        // 1) Rule A: Existing 60-minute idle auto-transfer rule for "New Lead" status
         if (lead.status === "New Lead") {
           if (!currentAssignee) return lead; // not currently assigned to a TL or Sales Team agent
 
@@ -1466,8 +1466,8 @@ export default function App() {
             new Date(lead.dateUpdated || lead.dateCreated).getTime() || 0
           );
           
-          if (referenceTime === 0 || now - referenceTime < thirtyMinutes) {
-            return lead; // 30 minutes has not passed yet or no valid reference time
+          if (referenceTime === 0 || now - referenceTime < sixtyMinutes) {
+            return lead; // 60 minutes has not passed yet or no valid reference time
           }
           
           // Get all members of the same role (team_leader or sales_team) for Round Robin distribution
@@ -1490,7 +1490,7 @@ export default function App() {
           
           // Create activity log message and notifications
           const currentRoleLabel = poolRole === "team_leader" ? "Team Leader" : "Sales Advisor";
-          const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 30 minutes while status remained 'New Lead'.`;
+          const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 60 minutes while status remained 'New Lead'.`;
           
           const newEditLog: LeadEditLog = {
             id: "edit-log-auto-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
@@ -1514,7 +1514,7 @@ export default function App() {
             id: "notif-prev-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
             recipientName: currentAgent,
             title: "Lead Transferred Out (Inactivity)",
-            message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 30 minutes.`,
+            message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 60 minutes.`,
             timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
             isRead: false,
             type: "update",
@@ -1538,7 +1538,7 @@ export default function App() {
             id: "notif-admin-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
             recipientName: "Admin",
             title: "System Auto-Reassignment",
-            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (30-min inactivity).`,
+            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (60-min inactivity).`,
             timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
             isRead: false,
             type: "update",
@@ -1698,7 +1698,8 @@ export default function App() {
       
       if (newAssignee) {
         finalUpdated.assignedTlId = newAssignee.id;
-        if (assigneeChanged) {
+        const statusChangedToNewLead = (oldLead.status !== "New Lead" && finalUpdated.status === "New Lead");
+        if (assigneeChanged || statusChangedToNewLead) {
           finalUpdated.assignmentTimestamp = now;
           finalUpdated.lastActionTimestamp = now;
         } else {

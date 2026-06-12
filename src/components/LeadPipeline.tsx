@@ -1709,7 +1709,7 @@ export default function LeadPipeline({
                 Lead Inactivity Auto-Transfer History Ledger
               </h3>
               <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                Real-time security auditing trail of auto-generated reassignments due to 30-minute inactivity rules
+                Real-time security auditing trail of auto-generated reassignments due to 60-minute inactivity rules
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1848,7 +1848,7 @@ export default function LeadPipeline({
             </div>
           ) : (
             <div className="py-12 text-center text-slate-400">
-              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 30 minutes.
+              No automatic transfer logs have been captured in this context. Auto-transfer rules kick in when "New Lead" status remains idle for 60 minutes.
             </div>
           )}
         </div>
@@ -1993,7 +1993,7 @@ export default function LeadPipeline({
                         <Clock size={10} className="animate-spin text-amber-500" style={{ animationDuration: '6s' }} />
                         {(() => {
                           const elapsed = Date.now() - (lead.lastActionTimestamp || lead.assignmentTimestamp || 0);
-                          const remaining = Math.max(0, 30 * 60 * 1000 - elapsed);
+                          const remaining = Math.max(0, 60 * 60 * 1000 - elapsed);
                           const minutes = Math.floor(remaining / 60000);
                           const seconds = Math.floor((remaining % 60000) / 1000);
                           return `Transfer in ${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
