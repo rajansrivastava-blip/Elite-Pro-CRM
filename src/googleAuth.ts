@@ -359,7 +359,8 @@ export function mapSpreadsheetRowsToLeads(
           return uName === targetName;
         });
 
-        if (matchedUser && (matchedUser.role === "sales_team" || matchedUser.role === "team_leader" || matchedUser.role === "admin")) {
+        // Ensure we only auto-assign to users who are active (active !== false)
+        if (matchedUser && matchedUser.active !== false && (matchedUser.role === "sales_team" || matchedUser.role === "team_leader" || matchedUser.role === "admin")) {
           assignedAgent = matchedUser.name;
           assignmentMatched = true;
         }

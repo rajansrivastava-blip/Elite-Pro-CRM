@@ -101,24 +101,27 @@ export default function AppointmentsList({
 
   // Get list of TL users for Super Admin / Admin dropdowns
   const tlUsers = useMemo(() => {
-    return users.filter(u => u.role === "team_leader");
+    return users.filter(u => u.role === "team_leader" && u.active !== false);
   }, [users]);
 
   // Get list of Sales Team users based on currentUser role and selected TL
   const salesUsers = useMemo(() => {
     if (!currentUser) return [];
     
+    // Only return active sales advisors
+    const activeUsers = users.filter(u => u.active !== false);
+    
     if (currentUser.role === "super_admin" || currentUser.role === "admin") {
       if (selectedTL === "all") {
-        return users.filter(u => u.role === "sales_team");
+        return activeUsers.filter(u => u.role === "sales_team");
       } else {
-        return users.filter(u => u.role === "sales_team" && u.teamLeaderId === selectedTL);
+        return activeUsers.filter(u => u.role === "sales_team" && u.teamLeaderId === selectedTL);
       }
     }
     
     if (currentUser.role === "team_leader") {
       // TL can only see their team members
-      return users.filter(u => u.role === "sales_team" && u.teamLeaderId === currentUser.id);
+      return activeUsers.filter(u => u.role === "sales_team" && u.teamLeaderId === currentUser.id);
     }
     
     return [];

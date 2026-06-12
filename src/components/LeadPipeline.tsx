@@ -304,22 +304,25 @@ export default function LeadPipeline({
   // Extract TL lists
   const leadTLUsers = useMemo(() => {
     if (!users) return [];
-    return users.filter(u => u.role === "team_leader");
+    return users.filter(u => u.role === "team_leader" && u.active !== false);
   }, [users]);
 
   // Extract Sales Advisors options
   const leadSalesUsersOptions = useMemo(() => {
     if (!users || !currentUser) return [];
     
+    // Only return active sales advisors
+    const activeUsers = users.filter(u => u.active !== false);
+    
     let eligibleSales: User[] = [];
     if (currentUser.role === "super_admin" || currentUser.role === "admin") {
       if (leadSelectedTL === "all") {
-        eligibleSales = users.filter(u => u.role === "sales_team");
+        eligibleSales = activeUsers.filter(u => u.role === "sales_team");
       } else {
-        eligibleSales = users.filter(u => u.role === "sales_team" && u.teamLeaderId === leadSelectedTL);
+        eligibleSales = activeUsers.filter(u => u.role === "sales_team" && u.teamLeaderId === leadSelectedTL);
       }
     } else if (currentUser.role === "team_leader") {
-      eligibleSales = users.filter(u => u.role === "sales_team" && u.teamLeaderId === currentUser.id);
+      eligibleSales = activeUsers.filter(u => u.role === "sales_team" && u.teamLeaderId === currentUser.id);
     }
     
     // Add TL themselves to the list
@@ -655,12 +658,16 @@ export default function LeadPipeline({
 
   const finalAgents = useMemo(() => {
     if (!users || users.length === 0) return presetAgents;
+    
+    // Only list active users for new lead assignments
+    const activeUsers = users.filter(u => u.active !== false);
+    
     if (currentUser?.role === "team_leader") {
-      return users
+      return activeUsers
         .filter(u => u.id === currentUser.id || u.teamLeaderId === currentUser.id)
         .map(u => u.name);
     }
-    return users.map((u) => u.name);
+    return activeUsers.map((u) => u.name);
   }, [users, currentUser]);
 
   const [showNewAgentDropdown, setShowNewAgentDropdown] = useState(false);

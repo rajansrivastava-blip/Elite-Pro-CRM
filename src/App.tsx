@@ -320,6 +320,35 @@ export default function App() {
     return saved ? saved === "true" : true;
   });
 
+  // Global "Pause Software" Mode setting (defaults to false)
+  const [isSoftwarePaused, setIsSoftwarePaused] = useState<boolean>(() => {
+    return localStorage.getItem("elite_pro_software_paused") === "true";
+  });
+
+  const handleToggleSoftwarePaused = () => {
+    setIsSoftwarePaused(prev => {
+      const newVal = !prev;
+      localStorage.setItem("elite_pro_software_paused", newVal ? "true" : "false");
+      
+      // Post alert to notification stack for visibility
+      const timestampText = new Date().toLocaleTimeString();
+      const newNotif: AppNotification = {
+        id: `paused-alert-${Date.now()}`,
+        recipientName: currentUser?.name || "System",
+        title: newVal ? "System Process Paused" : "System Process Resumed",
+        message: newVal 
+          ? `All automated database syncs and ingest actions have been successfully paused at ${timestampText}.` 
+          : `Automated operations and real-time syncing resumed successfully at ${timestampText}.`,
+        isRead: false,
+        timestamp: new Date().toISOString(),
+        type: "sync"
+      };
+      setNotifications(prev => [newNotif, ...prev]);
+
+      return newVal;
+    });
+  };
+
   const handleToggleAutoSync = () => {
     setIsAutoSyncEnabled(prev => {
       const newVal = !prev;
@@ -1181,13 +1210,21 @@ export default function App() {
     isAutoSyncEnabledRef.current = isAutoSyncEnabled;
   }, [isAutoSyncEnabled]);
 
+  const isSoftwarePausedRef = useRef(isSoftwarePaused);
+  useEffect(() => {
+    isSoftwarePausedRef.current = isSoftwarePaused;
+  }, [isSoftwarePaused]);
+
   const isSyncingSheetsRef = useRef(false);
   const lastLocalUpdateRef = useRef<Record<string, number>>({});
 
   // Background Google Sheets Synchronization Loop
   useEffect(() => {
     const runSheetsBackgroundSync = async () => {
-      // Prevents concurrent sync loops or attempts when CRM data is still loading
+      // Prevents concurrent sync loops or attempts when CRM data is still loading or software is paused
+      if (isSoftwarePausedRef.current) {
+        return;
+      }
       if (!crmDataLoadedRef.current) {
         return;
       }
@@ -1254,6 +1291,9 @@ export default function App() {
   // Background Meta Ads Leads Inbound sync Loop
   useEffect(() => {
     const runMetaBackgroundSync = async () => {
+      if (isSoftwarePausedRef.current) {
+        return;
+      }
       // Security check: Only trigger background sync for Admins or Super Admins
       const u = currentUserRef.current;
       if (!u || (u.role !== "super_admin" && u.role !== "admin")) {
@@ -1318,6 +1358,9 @@ export default function App() {
 
     const runSupabaseRealtimeSync = async () => {
       // 1. Guard check: only run if CRM data is loaded, and auto-sync is enabled
+      if (isSoftwarePausedRef.current) {
+        return;
+      }
       if (!crmDataLoadedRef.current || !isAutoSyncEnabledRef.current) {
         return;
       }
@@ -2457,6 +2500,8 @@ export default function App() {
         }}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        isSoftwarePaused={isSoftwarePaused}
+        onToggleSoftwarePause={handleToggleSoftwarePaused}
       />
 
       {/* Mobile Sidebar Backdrop Overlay */}
@@ -2592,6 +2637,39 @@ export default function App() {
               </div>
             </div>
           </header>
+
+          {/* Pause Notification Warning Banner */}
+          {isSoftwarePaused && (
+            <motion.div
+              id="global-system-paused-banner"
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-6 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left shadow-lg shadow-amber-500/5 animate-fade-in"
+            >
+              <div className="flex items-start sm:items-center gap-3">
+                <div className="p-2 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20 shrink-0">
+                  <span className="hidden sm:inline">⚠️</span>
+                  <span className="sm:hidden">⚡</span>
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-amber-500 flex items-center gap-2">
+                    Automated System Sync is Paused
+                    <span className="px-1.5 py-0.5 rounded text-[8px] font-mono font-bold uppercase bg-amber-500/20 text-amber-400 tracking-wider">Muted</span>
+                  </h4>
+                  <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">
+                    All recurring Google Sheets synchronization and Meta Ads lead auto-ingestion sequences are paused. Press Resume to reactivate real-time workflows.
+                  </p>
+                </div>
+              </div>
+              <button
+                id="resume-from-banner-btn"
+                onClick={handleToggleSoftwarePaused}
+                className="px-4 py-2 font-semibold text-xs rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-md shadow-amber-500/15 cursor-pointer active:scale-95 transition-all text-center whitespace-nowrap self-start sm:self-auto shrink-0"
+              >
+                Resume Operations
+              </button>
+            </motion.div>
+          )}
 
           {/* Active Tab Sub-view render */}
           <div id="tab-window-content-carrier" className="pb-16 animate-fade-in">

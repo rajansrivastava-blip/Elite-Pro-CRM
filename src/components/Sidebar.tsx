@@ -32,6 +32,8 @@ interface SidebarProps {
   onUpdateUserAvatar: (avatarUrl: string) => void;
   isOpen?: boolean;
   onClose?: () => void;
+  isSoftwarePaused?: boolean;
+  onToggleSoftwarePause?: () => void;
 }
 
 export default function Sidebar({
@@ -46,7 +48,9 @@ export default function Sidebar({
   onLogout,
   onUpdateUserAvatar,
   isOpen = false,
-  onClose
+  onClose,
+  isSoftwarePaused = false,
+  onToggleSoftwarePause
 }: SidebarProps) {
   
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -140,6 +144,45 @@ export default function Sidebar({
             title="Sync existing CRM and Google Calendar systems instantly"
           >
             <RefreshCw size={13} className={`stroke-[1.5] ${isSyncing ? "animate-spin" : ""}`} />
+          </button>
+        </div>
+
+        {/* Software Execution Pause Switch */}
+        <div className={`px-4 py-2.5 mx-4 mb-4 rounded-xl border flex items-center justify-between text-xs transition-all
+          ${isSoftwarePaused 
+            ? "bg-amber-500/10 border-amber-500/25 text-amber-500" 
+            : darkMode 
+              ? "bg-slate-800/45 border-slate-700/50 text-slate-300" 
+              : "bg-teal-500/5 border-teal-500/15 text-teal-700"}`}
+        >
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              {isSoftwarePaused ? (
+                <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+              ) : (
+                <>
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-emerald-400"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
+                </>
+              )}
+            </span>
+            <span className="font-semibold tracking-wide font-sans">
+              {isSoftwarePaused ? "System Paused" : "System Active"}
+            </span>
+          </div>
+          
+          <button
+            id="software-pause-toggle-btn"
+            onClick={onToggleSoftwarePause}
+            className={`px-2 py-1 rounded-lg text-[10px] font-mono tracking-wider font-bold uppercase transition active:scale-95 cursor-pointer border
+              ${isSoftwarePaused 
+                ? "bg-amber-500 text-slate-950 border-amber-400 hover:bg-amber-400 font-extrabold" 
+                : darkMode 
+                  ? "bg-slate-800 border-slate-705 text-slate-300 hover:bg-slate-700 hover:text-white" 
+                  : "bg-white border-slate-200 text-slate-700 hover:bg-slate-100"}`}
+            title={isSoftwarePaused ? "Resume automated system sync operations" : "Pause all background processors & sync triggers"}
+          >
+            {isSoftwarePaused ? "RESUME" : "PAUSE"}
           </button>
         </div>
 
