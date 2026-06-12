@@ -47,6 +47,85 @@ import {
 import { motion } from "motion/react";
 import { isDuplicateLead } from "./googleAuth";
 
+const ensureStableTimestamps = (leadsList: Lead[], usersList: User[]): Lead[] => {
+  if (!leadsList || !Array.isArray(leadsList)) return [];
+  const cachedStr = localStorage.getItem("crm_lead_timestamps_cache");
+  const cache = cachedStr ? JSON.parse(cachedStr) : {};
+  let cacheUpdated = false;
+  
+  const now = Date.now();
+  const updated = leadsList.map(l => {
+    const cached = cache[l.id];
+    
+    let assignmentTimestamp = l.assignmentTimestamp;
+    let lastActionTimestamp = l.lastActionTimestamp;
+    let reassignedTimestamp = l.reassignedTimestamp;
+    let assignedTlId = l.assignedTlId;
+    
+    if (!assignedTlId && l.assignedAgent && usersList) {
+      const assignedUser = usersList.find(u => u.name.toLowerCase() === l.assignedAgent.toLowerCase() && (u.role === "team_leader" || u.role === "sales_team"));
+      if (assignedUser) {
+        assignedTlId = assignedUser.id;
+      }
+    }
+    
+    if (!assignmentTimestamp && cached?.assignmentTimestamp) {
+      assignmentTimestamp = cached.assignmentTimestamp;
+    }
+    if (!lastActionTimestamp && cached?.lastActionTimestamp) {
+      lastActionTimestamp = cached.lastActionTimestamp;
+    }
+    if (!reassignedTimestamp && cached?.reassignedTimestamp) {
+      reassignedTimestamp = cached.reassignedTimestamp;
+    }
+    
+    if (l.status === "New Lead") {
+      if (!assignmentTimestamp) {
+        assignmentTimestamp = now;
+        cacheUpdated = true;
+      }
+      if (!lastActionTimestamp) {
+        lastActionTimestamp = now;
+        cacheUpdated = true;
+      }
+    }
+    
+    if (l.status === "Not Pick" || l.status === "Switched Off") {
+      if (!reassignedTimestamp) {
+        reassignedTimestamp = now;
+        cacheUpdated = true;
+      }
+    }
+    
+    if (
+      assignmentTimestamp !== cached?.assignmentTimestamp ||
+      lastActionTimestamp !== cached?.lastActionTimestamp ||
+      reassignedTimestamp !== cached?.reassignedTimestamp
+    ) {
+      cache[l.id] = {
+        assignmentTimestamp,
+        lastActionTimestamp,
+        reassignedTimestamp
+      };
+      cacheUpdated = true;
+    }
+    
+    return {
+      ...l,
+      assignedTlId,
+      assignmentTimestamp,
+      lastActionTimestamp,
+      reassignedTimestamp
+    };
+  });
+  
+  if (cacheUpdated) {
+    localStorage.setItem("crm_lead_timestamps_cache", JSON.stringify(cache));
+  }
+  
+  return updated;
+};
+
 export default function App() {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
@@ -1271,7 +1350,7 @@ export default function App() {
           // preventing race condition state flipping or defaults back to old status.
           const currentLeads = leadsRef.current || [];
           const nowTime = Date.now();
-          const uniquePulledHandled = uniquePulled.map(l => {
+          const uniquePulledHandled = ensureStableTimestamps(uniquePulled.map(l => {
             const lastLocalTime = lastLocalUpdateRef.current[l.id];
             if (lastLocalTime && nowTime - lastLocalTime < 10000) {
               const localLead = currentLeads.find(cl => cl.id === l.id);
@@ -1280,7 +1359,7 @@ export default function App() {
               }
             }
             return l;
-          });
+          }), usersRef.current || []);
 
           // Check if different from leadsRef.current
           const sortedA = [...uniquePulledHandled].sort((x, y) => String(x.id).localeCompare(String(y.id)));
@@ -1370,27 +1449,24 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, []);
 
-  // Sync initialization for pre-existing New Lead elements without tracking data
+  // Sync initialization for pre-existing New Lead elements without tracking data stably via local cache fallback
   useEffect(() => {
-    let touched = false;
-    const now = Date.now();
-    const initializedLeads = leads.map(l => {
-      if (l.status === "New Lead" && !l.assignmentTimestamp) {
-        touched = true;
-        const assignedUser = users.find(u => u.name.toLowerCase() === l.assignedAgent.toLowerCase() && (u.role === "team_leader" || u.role === "sales_team"));
-        return {
-          ...l,
-          assignedTlId: assignedUser ? assignedUser.id : undefined,
-          assignmentTimestamp: now,
-          lastActionTimestamp: now
-        };
-      }
-      return l;
+    if (leads.length === 0) return;
+    const initializedLeads = ensureStableTimestamps(leads, users);
+    const differs = initializedLeads.some((sl, idx) => {
+      const orig = leads[idx];
+      if (!orig) return true;
+      return (
+        sl.assignmentTimestamp !== orig.assignmentTimestamp ||
+        sl.lastActionTimestamp !== orig.lastActionTimestamp ||
+        sl.reassignedTimestamp !== orig.reassignedTimestamp ||
+        sl.assignedTlId !== orig.assignedTlId
+      );
     });
-    if (touched) {
+    if (differs) {
       setLeads(initializedLeads);
     }
-  }, [users]);
+  }, [users, leads]);
 
   // Background monitoring for 60-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off
   useEffect(() => {
