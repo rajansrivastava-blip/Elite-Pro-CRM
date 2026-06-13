@@ -29,7 +29,8 @@ import {
   UserCheck,
   Upload,
   FileSpreadsheet,
-  Download
+  Download,
+  ArrowLeftRight
 } from "lucide-react";
 
 
@@ -47,6 +48,7 @@ interface LeadPipelineProps {
   onUpdateLead: (lead: Lead) => void;
   onDeleteLead: (id: string) => void;
   onBulkDeleteLeads?: (ids: string[]) => void;
+  onBulkTransferLeads?: (leadIds: string[], targetAgentNames: string[]) => Promise<{ success: boolean; count: number; error?: string }>;
   communicationLogs: CommunicationLog[];
   onAddCommunicationLog: (log: Omit<CommunicationLog, "id">) => void;
   darkMode: boolean;
@@ -63,6 +65,7 @@ export default function LeadPipeline({
   onUpdateLead,
   onDeleteLead,
   onBulkDeleteLeads,
+  onBulkTransferLeads,
   communicationLogs,
   onAddCommunicationLog,
   darkMode,
@@ -338,12 +341,6 @@ export default function LeadPipeline({
     return pool;
   }, [users, currentUser, leadSelectedTL]);
 
-  // Handler to sync resetting selected agent of TL filters properly
-  const handleLeadTLChange = (tlId: string) => {
-    setLeadSelectedTL(tlId);
-    setLeadSelectedAgentName("all");
-  };
-  
   // Modal / Form States
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
@@ -355,6 +352,85 @@ export default function LeadPipeline({
   const [importPreviewData, setImportPreviewData] = useState<any[]>([]);
   const [fileName, setFileName] = useState<string>("");
   const [dragActive, setDragActive] = useState<boolean>(false);
+
+  // Bulk Status Transfer States
+  const [isBulkTransferModalOpen, setIsBulkTransferModalOpen] = useState(false);
+  const [bulkSourceStatus, setBulkSourceStatus] = useState<string>("New Lead");
+  const [bulkSourceAgent, setBulkSourceAgent] = useState<string>("All");
+  const [bulkTargetAgents, setBulkTargetAgents] = useState<string[]>([]);
+  const [bulkSearchQuery, setBulkSearchQuery] = useState<string>("");
+  const [bulkTransferWorking, setBulkTransferWorking] = useState(false);
+  const [bulkTransferMessage, setBulkTransferMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // Bulk Status Transfer Helper Calculations
+  const bulkMatchingLeads = useMemo(() => {
+    return leads.filter(lead => {
+      const matchStatus = lead.status === bulkSourceStatus;
+      if (!matchStatus) return false;
+      if (bulkSourceAgent === "All") return true;
+      if (bulkSourceAgent === "Unassigned") {
+        return !lead.assignedAgent || lead.assignedAgent.trim() === "";
+      }
+      return (lead.assignedAgent || "").trim().toLowerCase() === bulkSourceAgent.trim().toLowerCase();
+    });
+  }, [leads, bulkSourceStatus, bulkSourceAgent]);
+
+  const bulkCurrentAssigneesForSelectedStatus = useMemo(() => {
+    const list = leads
+      .filter(l => l.status === bulkSourceStatus)
+      .map(l => (l.assignedAgent || "").trim());
+    // Use unique non-empty cased values, map empty/trimmed to "Unassigned"
+    const unique = Array.from(new Set(list)).map(name => name === "" ? "Unassigned" : name);
+    return unique.filter(Boolean);
+  }, [leads, bulkSourceStatus]);
+
+  const bulkActiveAssignees = useMemo(() => {
+    if (!users) return [];
+    return users.filter(u => (u.role === "sales_team" || u.role === "team_leader") && u.active !== false);
+  }, [users]);
+
+  // Handler to sync resetting selected agent of TL filters properly
+  const handleLeadTLChange = (tlId: string) => {
+    setLeadSelectedTL(tlId);
+    setLeadSelectedAgentName("all");
+  };
+
+  const handleCommitBulkTransfer = async () => {
+    if (bulkMatchingLeads.length === 0) {
+      setBulkTransferMessage({ type: "error", text: "There are no leads matching your selection criteria to transfer." });
+      return;
+    }
+    if (bulkTargetAgents.length === 0) {
+      setBulkTransferMessage({ type: "error", text: "Please select at least one active Team Leader or Sales Advisor as recipient." });
+      return;
+    }
+    
+    setBulkTransferWorking(true);
+    setBulkTransferMessage(null);
+    try {
+      if (onBulkTransferLeads) {
+        const res = await onBulkTransferLeads(bulkMatchingLeads.map(l => l.id), bulkTargetAgents);
+        if (res.success) {
+          const namesStr = bulkTargetAgents.length === 1 
+            ? bulkTargetAgents[0]
+            : `${bulkTargetAgents.length} selected advisors sequentially (Round-Robin equal balanced distribution)`;
+          setBulkTransferMessage({ 
+            type: "success", 
+            text: `Successfully reallocated ${res.count} CRM record${res.count !== 1 ? "s" : ""} of status "${bulkSourceStatus}" across ${namesStr}!` 
+          });
+          setBulkTargetAgents([]);
+        } else {
+          setBulkTransferMessage({ type: "error", text: res.error || "An error occurred during bulk transfer." });
+        }
+      } else {
+        setBulkTransferMessage({ type: "error", text: "Bulk transfer action not supported." });
+      }
+    } catch (err: any) {
+      setBulkTransferMessage({ type: "error", text: err.message || "An unexpected error occurred." });
+    } finally {
+      setBulkTransferWorking(false);
+    }
+  };
 
   // Download CSV Template function
   const downloadImportTemplate = () => {
@@ -1137,6 +1213,25 @@ export default function LeadPipeline({
                   <FileSpreadsheet size={16} />
                   Import Spreadsheet
                 </button>
+
+                {(currentUser?.role === "super_admin" || currentUser?.role === "admin" || currentUser?.role === "team_leader") && (
+                  <button
+                    id="bulk-transfer-btn"
+                    onClick={() => {
+                      setBulkTransferMessage(null);
+                      setBulkTargetAgents([]);
+                      setBulkSearchQuery("");
+                      setBulkSourceStatus("New Lead");
+                      setBulkSourceAgent("All");
+                      setIsBulkTransferModalOpen(true);
+                    }}
+                    className="px-4.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-550 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-indigo-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
+                    title="Bulk transfer leads based on selected lead status"
+                  >
+                    <ArrowLeftRight size={16} />
+                    Bulk Transfer Status
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -1716,7 +1811,7 @@ export default function LeadPipeline({
                 Lead Inactivity Auto-Transfer History Ledger
               </h3>
               <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                Real-time auditing trail of automatic reassignments (Note: Auto-transfer rules are currently stopped/disabled)
+                Real-time auditing trail of automatic reassignments (Note: Auto-transfer rules have been permanently removed from the system)
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1855,7 +1950,7 @@ export default function LeadPipeline({
             </div>
           ) : (
             <div className="py-12 text-center text-slate-400">
-              No automatic transfer logs captured. Auto-transfer rules are currently stopped/disabled in the system.
+              No automatic transfer logs captured. Auto-transfer rules have been permanently removed from the system.
             </div>
           )}
         </div>
@@ -3051,6 +3146,333 @@ export default function LeadPipeline({
               >
                 <Check size={14} />
                 Register {importPreviewData.length > 0 ? `${importPreviewData.length} Parsed Leads` : "Spreadsheet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: Bulk Lead Reassignment Operator */}
+      {isBulkTransferModalOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 transition-all overflow-y-auto">
+          <div 
+            id="bulk-transfer-modal"
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl relative my-8
+              ${darkMode ? "bg-slate-900 border-slate-800 text-white" : "bg-white border-slate-200 text-slate-800"}`}
+          >
+            <button 
+              onClick={() => {
+                setIsBulkTransferModalOpen(false);
+                setBulkTransferMessage(null);
+                setBulkTargetAgents([]);
+                setBulkSearchQuery("");
+              }}
+              className="absolute top-4 right-4 text-slate-400 dark:hover:text-slate-200 hover:text-slate-800 transition-colors"
+            >
+              <X size={20} />
+            </button>
+
+            <div className="flex items-center gap-2 mb-2 pb-3 border-b border-slate-100/10">
+              <ArrowLeftRight className="text-indigo-500" size={24} />
+              <h3 className="font-display font-bold text-lg">Bulk Status Reassigner</h3>
+            </div>
+
+            <p className="text-xs text-slate-400 mb-4 leading-relaxed">
+              Batch transfer investor portfolios instantly from target statuses or specific advisors and distribute them equally across selected online Sales Consultants.
+            </p>
+
+            <div className="space-y-4">
+              {/* SELECT SOURCE LEAD STATUS */}
+              <div>
+                <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
+                  1. Filter by Lead Status
+                </label>
+                <select
+                  value={bulkSourceStatus}
+                  onChange={(e) => {
+                    setBulkSourceStatus(e.target.value);
+                    setBulkSourceAgent("All");
+                    setBulkTransferMessage(null);
+                  }}
+                  className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                    ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                >
+                  <option value="New Lead">New Lead</option>
+                  <option value="Interested">Interested</option>
+                  <option value="Follow Up">Follow Up</option>
+                  <option value="Detailed Share">Detailed Share</option>
+                  <option value="Meeting Done">Meeting Done</option>
+                  <option value="Site Visit">Site Visit</option>
+                  <option value="Call Back">Call Back</option>
+                  <option value="Closed Client">Closed Client</option>
+                  <option value="Not Pick">Not Pick</option>
+                  <option value="Switched Off">Switched Off</option>
+                  <option value="Not Interested">Not Interested</option>
+                  <option value="Low Budget">Low Budget</option>
+                  <option value="Junk">Junk</option>
+                  <option value="Duplicate">Duplicate</option>
+                </select>
+              </div>
+
+              {/* FILTER BY CURRENT ASSIGNEE */}
+              <div>
+                <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
+                  2. From Current Occupant / Owner
+                </label>
+                <select
+                  value={bulkSourceAgent}
+                  onChange={(e) => {
+                    setBulkSourceAgent(e.target.value);
+                    setBulkTransferMessage(null);
+                  }}
+                  className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                    ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                >
+                  <option value="All">All Owners (Reallocate complete status bucket)</option>
+                  <option value="Unassigned">Unassigned (Only direct unowned leads)</option>
+                  {bulkCurrentAssigneesForSelectedStatus
+                    .filter(name => name.trim().toLowerCase() !== "unassigned")
+                    .map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              {/* DYNAMIC MATCH COUNT INDICATOR */}
+              <div className={`p-3.5 rounded-xl border flex items-center justify-between text-xs
+                ${bulkMatchingLeads.length > 0 
+                  ? darkMode 
+                    ? "bg-indigo-950/20 border-indigo-500/20 text-indigo-300"
+                    : "bg-indigo-50 border-indigo-100 text-indigo-700"
+                  : darkMode 
+                    ? "bg-slate-950 text-slate-500 border-slate-850"
+                    : "bg-slate-100 text-slate-500 border-slate-200"}`}
+              >
+                <span className="font-semibold flex items-center gap-1.5">
+                  <span className={`inline-block w-2.5 h-2.5 rounded-full ${bulkMatchingLeads.length > 0 ? "bg-indigo-500 animate-pulse" : "bg-slate-400"}`} />
+                  Leads detected:
+                </span>
+                <span className="font-mono font-bold text-sm">
+                  {bulkMatchingLeads.length} Lead{bulkMatchingLeads.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+
+              {/* SELECT TARGET ADVISORS USING CHECKBOXES */}
+              <div>
+                <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
+                  3. Select Recipient Sales Team or TLs
+                </label>
+
+                {/* SEARCH INPUT */}
+                <div className="relative mb-2">
+                  <input
+                    type="text"
+                    value={bulkSearchQuery}
+                    onChange={(e) => setBulkSearchQuery(e.target.value)}
+                    placeholder="Search advisors or TLs..."
+                    className={`w-full p-2.5 pl-8 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                      ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                  />
+                  <div className="absolute left-2.5 top-3.5 text-slate-400">
+                    <Search size={14} />
+                  </div>
+                  {bulkSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setBulkSearchQuery("")}
+                      className="absolute right-2.5 top-3 text-slate-400 hover:text-slate-200 text-xs"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+
+                {/* QUICK SELECTION BUTTONS */}
+                <div className="flex gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const availableList = bulkActiveAssignees.filter(u => {
+                        if (bulkSourceAgent !== "All" && bulkSourceAgent !== "Unassigned") {
+                          return u.name.trim().toLowerCase() !== bulkSourceAgent.trim().toLowerCase();
+                        }
+                        return true;
+                      });
+                      const eligibleFiltered = availableList.filter(u => {
+                        if (!bulkSearchQuery.trim()) return true;
+                        return (u.name || "").toLowerCase().includes(bulkSearchQuery.toLowerCase());
+                      });
+                      const allNames = eligibleFiltered.map(u => u.name);
+                      setBulkTargetAgents(prev => Array.from(new Set([...prev, ...allNames])));
+                      setBulkTransferMessage(null);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition cursor-pointer
+                      ${darkMode ? "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800"}`}
+                  >
+                    Select All Visible
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkTargetAgents([]);
+                      setBulkTransferMessage(null);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold tracking-wide uppercase transition cursor-pointer
+                      ${darkMode ? "bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800"}`}
+                  >
+                    Deselect All
+                  </button>
+                </div>
+
+                {/* SCROLLABLE LIST OF CHECKBOXES */}
+                <div className={`border rounded-xl p-2 max-h-40 overflow-y-auto space-y-1 custom-scrollbar
+                  ${darkMode ? "bg-slate-950/40 border-slate-850" : "bg-slate-50 border-slate-200"}`}
+                >
+                  {(() => {
+                    const availableList = bulkActiveAssignees.filter(u => {
+                      if (bulkSourceAgent !== "All" && bulkSourceAgent !== "Unassigned") {
+                        return u.name.trim().toLowerCase() !== bulkSourceAgent.trim().toLowerCase();
+                      }
+                      return true;
+                    });
+                    const eligibleFiltered = availableList.filter(u => {
+                      if (!bulkSearchQuery.trim()) return true;
+                      return (u.name || "").toLowerCase().includes(bulkSearchQuery.toLowerCase());
+                    });
+
+                    if (eligibleFiltered.length === 0) {
+                      return (
+                        <div className="text-center py-6 text-slate-500 text-xs font-medium">
+                          No matching active teammates found.
+                        </div>
+                      );
+                    }
+
+                    return eligibleFiltered.map((user) => {
+                      const isChecked = bulkTargetAgents.includes(user.name);
+                      return (
+                        <label
+                          key={user.id}
+                          className={`flex items-center gap-2.5 p-2 rounded-lg cursor-pointer transition select-none
+                            ${isChecked 
+                              ? darkMode ? "bg-indigo-950/20 text-indigo-200" : "bg-indigo-50 text-indigo-900 font-semibold"
+                              : darkMode ? "hover:bg-slate-900/60 text-slate-300" : "hover:bg-slate-100 text-slate-700"
+                            }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              setBulkTransferMessage(null);
+                              if (e.target.checked) {
+                                setBulkTargetAgents(prev => [...prev, user.name]);
+                              } else {
+                                setBulkTargetAgents(prev => prev.filter(name => name !== user.name));
+                              }
+                            }}
+                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
+                          />
+                          <div className="flex-1 flex justify-between items-center min-w-0">
+                            <span className="text-xs truncate">{user.name}</span>
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold uppercase tracking-wider
+                              ${user.role === "team_leader" 
+                                ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" 
+                                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"}`}
+                            >
+                              {user.role === "team_leader" ? "TL" : "Sales"}
+                            </span>
+                          </div>
+                        </label>
+                      );
+                    });
+                  })()}
+                </div>
+
+                {/* SUMMARY COUNTER */}
+                <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono mt-1 px-1">
+                  <span>Selected recipients: {bulkTargetAgents.length}</span>
+                </div>
+              </div>
+
+              {/* DYNAMIC EQUAL DISTRIBUTION FORECAST DISPLAY */}
+              {bulkTargetAgents.length > 0 && bulkMatchingLeads.length > 0 && (
+                <div className={`p-3 rounded-xl border text-xs leading-normal animate-fadeIn flex gap-2 items-start
+                  ${darkMode 
+                    ? "bg-indigo-950/10 border-indigo-500/20 text-indigo-300/90" 
+                    : "bg-indigo-50 border-indigo-100 text-indigo-700"}`}
+                >
+                  <ArrowLeftRight size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    <div className="font-semibold mb-0.5 text-[11px] uppercase tracking-wider">Equal Distribution Forecast:</div>
+                    <p className="opacity-90">
+                      {(() => {
+                        const numLeads = bulkMatchingLeads.length;
+                        const numAgents = bulkTargetAgents.length;
+                        const base = Math.floor(numLeads / numAgents);
+                        const remainder = numLeads % numAgents;
+                        if (remainder === 0) {
+                          return `Perfect Split! Each of the ${numAgents} selected advisors will receive exactly ${base} lead${base !== 1 ? "s" : ""}.`;
+                        } else {
+                          return `${remainder} advisor${remainder !== 1 ? "s" : ""} will receive ${base + 1} lead${base + 1 !== 1 ? "s" : ""}, and the other ${numAgents - remainder} will receive ${base} lead${base !== 1 ? "s" : ""} each (equal round-robin allocation).`;
+                        }
+                      })()}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* FEEDBACK STATUS PROMPTS */}
+              {bulkTransferMessage && (
+                <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 animate-fadeIn
+                  ${bulkTransferMessage.type === "success" 
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400" 
+                    : "bg-rose-500/10 border-rose-500/20 text-rose-400"}`}
+                >
+                  <AlertCircle size={16} className="mt-0.5 shrink-0" />
+                  <span className="leading-normal">{bulkTransferMessage.text}</span>
+                </div>
+              )}
+            </div>
+
+            {/* ACTION FOOTER */}
+            <div className="flex gap-2.5 justify-end pt-4 mt-6 border-t border-slate-100/10">
+              <button
+                type="button"
+                disabled={bulkTransferWorking}
+                onClick={() => {
+                  setIsBulkTransferModalOpen(false);
+                  setBulkTransferMessage(null);
+                  setBulkTargetAgents([]);
+                  setBulkSearchQuery("");
+                }}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer transition
+                  ${darkMode ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-white" : "bg-slate-100 hover:bg-slate-150 border-slate-205 text-slate-855"}
+                  disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                Close Panel
+              </button>
+              <button
+                type="button"
+                disabled={bulkTransferWorking || bulkMatchingLeads.length === 0 || bulkTargetAgents.length === 0}
+                onClick={handleCommitBulkTransfer}
+                className={`px-5 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition cursor-pointer select-none
+                  ${bulkMatchingLeads.length > 0 && bulkTargetAgents.length > 0 && !bulkTransferWorking
+                    ? "bg-indigo-600 hover:bg-indigo-500 text-white active:scale-95 shadow-md shadow-indigo-600/15" 
+                    : "bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed"}`}
+              >
+                {bulkTransferWorking ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    Executing Reallocation...
+                  </>
+                ) : (
+                  <>
+                    <Check size={14} />
+                    Apply Bulk Reassignment
+                  </>
+                )}
               </button>
             </div>
           </div>

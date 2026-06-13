@@ -1520,297 +1520,141 @@ export default function App() {
     }
   }, [users, leads]);
 
-  // Background monitoring for 60-minute Lead Auto-Transfer Rule for New Lead, and 48-hour for Not Pick / Switched Off (STOPPED per user request)
-  useEffect(() => {
-    const checkAndReassignLeads = () => {
-      // Stopped automatically lead transfer as requested by the user
-      return;
-      const now = Date.now();
-      const sixtyMinutes = 60 * 60 * 1000; // 60 minutes in milliseconds
-      
-      let wasUpdated = false;
-      let newNotifications: AppNotification[] = [];
-      let newEditLogs: LeadEditLog[] = [];
-      
-      // Set of parsed, simplified lowercase names for robust matching of allowed auto-transfer users
-      const allowedNormalizeSet = new Set([
-        "rickymatharu",
-        "prabhjotsingh",
-        "shammyverma",
-        "sanjeevmehta",
-        "haarishkhan",
-        "vinaygrewal",
-        "vishallaller",
-        "yuvanshkapoor",
-        "pardeepsharma",
-        "chiragmehta",
-        "pawantanwar",
-        "deepanshugarg",
-        "ankitghudayia",
-        "devverma",
-        "kunalwadhwa",
-        "kaushalmidha",
-        "argho",
-        "jeevakraina",
-        "sahilarora",
-        "pratibhapawa"
-      ]);
+  // Auto-transfer rules (60-minute idle transfers and 48-hour status transfers) have been permanently removed from the system.
 
-      const getNormalizedParts = (nameStr: string) => {
-        if (!nameStr) return [];
-        return nameStr.toLowerCase().replace(/\s+/g, '').split('/');
-      };
 
-      const isNameInAllowedList = (nameStr: string) => {
-        if (!nameStr) return false;
-        const parts = getNormalizedParts(nameStr);
-        const inPreset = parts.some(part => allowedNormalizeSet.has(part));
-        if (inPreset) return true;
-        return (users || []).some(u => {
-          if (u.role !== "sales_team" && u.role !== "team_leader") return false;
-          if (u.active === false) return false;
-          const uParts = getNormalizedParts(u.name);
-          return parts.some(p => uParts.includes(p)) || uParts.some(p => parts.includes(p));
-        });
-      };
+  // Handler: Bulk Transfer Leads
+  const handleBulkTransferLeads = async (leadIds: string[], targetAgentNames: string[]): Promise<{ success: boolean; count: number; error?: string }> => {
+    if (!currentUser) {
+      return { success: false, count: 0, error: "No authenticated user session found." };
+    }
 
-      const updatedLeadsList = leads.map(lead => {
-        const currentAgent = lead.assignedAgent;
-        const currentAssignee = users.find(u => {
-          const uParts = getNormalizedParts(u.name);
-          const agentParts = getNormalizedParts(currentAgent);
-          const nameMatches = uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
-          return nameMatches && (u.role === "team_leader" || u.role === "sales_team");
-        });
-
-        // 1) Rule A: Existing 60-minute idle auto-transfer rule for "New Lead" status
-        if (lead.status === "New Lead") {
-          if (!currentAssignee) return lead; // not currently assigned to a TL or Sales Team agent
-
-          // Ensure current occupant of the lead is on the allowed list to trigger auto-transfer
-          if (!isNameInAllowedList(currentAgent)) return lead;
-          
-          // Find reference timestamp for measuring inactivity (last action time or original assignment time)
-          const referenceTime = Math.max(
-            lead.lastActionTimestamp || lead.assignmentTimestamp || 0,
-            lead.assignmentTimestamp || 0,
-            new Date(lead.dateUpdated || lead.dateCreated).getTime() || 0
-          );
-          
-          if (referenceTime === 0 || now - referenceTime < sixtyMinutes) {
-            return lead; // 60 minutes has not passed yet or no valid reference time
-          }
-          
-          // Get all members of the same role (team_leader or sales_team) for Round Robin distribution
-          const poolRole = currentAssignee.role;
-          const sameRolePool = users.filter(u => 
-            u.role === poolRole && 
-            isNameInAllowedList(u.name) &&
-            u.active !== false
-          );
-          if (sameRolePool.length <= 1) return lead; // No other user of this role in the allowed list to transfer to
-          
-          const currentIndex = sameRolePool.findIndex(u => {
-            const uParts = getNormalizedParts(u.name);
-            const agentParts = getNormalizedParts(currentAgent);
-            return uParts.some(p => agentParts.includes(p)) || agentParts.some(p => uParts.includes(p));
-          });
-          const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % sameRolePool.length;
-          const nextTeammate = sameRolePool[nextIndex];
-          
-          wasUpdated = true;
-          
-          // Create activity log message and notifications
-          const currentRoleLabel = poolRole === "team_leader" ? "Team Leader" : "Sales Advisor";
-          const activityMsg = `Lead automatically transferred from ${currentAgent} to ${nextTeammate.name} because no action was taken within 60 minutes while status remained 'New Lead'.`;
-          
-          const newEditLog: LeadEditLog = {
-            id: "edit-log-auto-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            leadId: lead.id,
-            leadName: lead.name,
-            editorName: "System Auto-Transfer Agent",
-            editorRole: "super_admin",
-            timestamp: new Date().toLocaleString("en-US", { 
-              timeStyle: "medium", 
-              dateStyle: "medium",
-              timeZone: "UTC"
-            }) + " UTC",
-            changes: [
-              { field: "assignedAgent", oldValue: currentAgent, newValue: nextTeammate.name }
-            ]
-          };
-          newEditLogs.push(newEditLog);
-          
-          // Message notifications
-          const notifPrev: AppNotification = {
-            id: "notif-prev-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            recipientName: currentAgent,
-            title: "Lead Transferred Out (Inactivity)",
-            message: `Lead "${lead.name}" has been transferred to ${nextTeammate.name} due to lack of action within 60 minutes.`,
-            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-            isRead: false,
-            type: "update",
-            leadId: lead.id,
-            leadName: lead.name
-          };
-          
-          const notifNext: AppNotification = {
-            id: "notif-next-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            recipientName: nextTeammate.name,
-            title: "Inactivity Lead Assignment",
-            message: `Lead "${lead.name}" has been automatically transferred to you from ${currentAgent}.`,
-            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-            isRead: false,
-            type: "assignment",
-            leadId: lead.id,
-            leadName: lead.name
-          };
-          
-          const notifAdmin: AppNotification = {
-            id: "notif-admin-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            recipientName: "Admin",
-            title: "System Auto-Reassignment",
-            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (60-min inactivity).`,
-            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-            isRead: false,
-            type: "update",
-            leadId: lead.id,
-            leadName: lead.name
-          };
-          newNotifications.push(notifPrev, notifNext, notifAdmin);
-          
-          return {
-            ...lead,
-            assignedAgent: nextTeammate.name,
-            assignedTlId: nextTeammate.id,
-            assignmentTimestamp: now,
-            lastActionTimestamp: now,
-            reassignedTimestamp: now,
-            notes: lead.notes,
-            dateUpdated: new Date().toISOString().split("T")[0]
-          };
-        }
-
-        // 2) Rule B: New 48-hour random auto-transfer rule for "Not Pick" and "Switched Off" statuses
-        if (lead.status === "Not Pick" || lead.status === "Switched Off") {
-          const transferTime = lead.reassignedTimestamp || lead.assignmentTimestamp || new Date(lead.dateCreated).getTime();
-          const fortyEightHours = 48 * 60 * 60 * 1000;
-          if (isNaN(transferTime) || now - transferTime < fortyEightHours) {
-            return lead;
-          }
-
-          // Fetch list of active/allowed sales team users excluding the current agent (to assign randomly)
-          const salesPool = users.filter(u => 
-            u.role === "sales_team" && 
-            isNameInAllowedList(u.name) &&
-            u.name.toLowerCase() !== (currentAgent || "").toLowerCase() &&
-            u.active !== false
-          );
-
-          if (salesPool.length === 0) return lead; // No other sales team member to transfer to
-
-          // Pick a random sales teammate
-          const nextTeammate = salesPool[Math.floor(Math.random() * salesPool.length)];
-
-          wasUpdated = true;
-
-          const activityMsg = `Lead automatically reassigned randomly to ${nextTeammate.name} from ${currentAgent} because it remained in '${lead.status}' status for more than 48 hours since last assignment/transfer.`;
-
-          const newEditLog: LeadEditLog = {
-            id: "edit-log-auto-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            leadId: lead.id,
-            leadName: lead.name,
-            editorName: "System Auto-Reassigner",
-            editorRole: "super_admin",
-            timestamp: new Date().toLocaleString("en-US", { 
-              timeStyle: "medium", 
-              dateStyle: "medium",
-              timeZone: "UTC"
-            }) + " UTC",
-            changes: [
-              { field: "assignedAgent", oldValue: currentAgent, newValue: nextTeammate.name }
-            ]
-          };
-          newEditLogs.push(newEditLog);
-
-          // Notifications
-          const notifPrev: AppNotification = {
-            id: "notif-prev-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            recipientName: currentAgent,
-            title: "Lead Transferred Out (48h)",
-            message: `Lead "${lead.name}" (Status: ${lead.status}) has been randomly reassigned to ${nextTeammate.name} after 48h.`,
-            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-            isRead: false,
-            type: "update",
-            leadId: lead.id,
-            leadName: lead.name
-          };
-
-          const notifNext: AppNotification = {
-            id: "notif-next-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            recipientName: nextTeammate.name,
-            title: "Random 48h Lead Assignment",
-            message: `Lead "${lead.name}" has been randomly assigned to you because previous agent marked as "${lead.status}" for over 48h since last transfer.`,
-            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-            isRead: false,
-            type: "assignment",
-            leadId: lead.id,
-            leadName: lead.name
-          };
-
-          const notifAdmin: AppNotification = {
-            id: "notif-admin-48h-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
-            recipientName: "Admin",
-            title: "System 48h Auto-Transfer",
-            message: `Lead "${lead.name}" auto-transferred from ${currentAgent} to ${nextTeammate.name} (48h ${lead.status}).`,
-            timestamp: new Date().toLocaleString("en-US", { timeStyle: "short", dateStyle: "medium" }),
-            isRead: false,
-            type: "update",
-            leadId: lead.id,
-            leadName: lead.name
-          };
-          newNotifications.push(notifPrev, notifNext, notifAdmin);
-
-          return {
-            ...lead,
-            assignedAgent: nextTeammate.name,
-            assignedTlId: nextTeammate.id,
-            assignmentTimestamp: now,
-            lastActionTimestamp: now,
-            reassignedTimestamp: now,
-            notes: (lead.notes ? lead.notes + "\n" : "") + "[System] " + activityMsg,
-            dateUpdated: new Date().toISOString().split("T")[0]
-          };
-        }
-
-        return lead;
-      });
-      
-      if (wasUpdated) {
-        setNotifications(prev => [...newNotifications, ...prev]);
-        setLeadEditLogs(prev => [...newEditLogs, ...prev]);
-        setLeads(updatedLeadsList);
-        
-        // Sync to Supabase if enabled
-        if (isAutoSyncEnabled) {
-          const changedLeads = updatedLeadsList.filter(l => {
-            const original = leads.find(ol => ol.id === l.id);
-            return original && original.assignedAgent !== l.assignedAgent;
-          });
-          changedLeads.forEach(async cl => {
-            await dbUpsertLead(cl);
-          });
-          newEditLogs.forEach(async el => {
-            await dbUpsertLeadEditLog(el);
-          });
-        }
-      }
-    };
+    if (!targetAgentNames || targetAgentNames.length === 0) {
+      return { success: false, count: 0, error: "No target advisors were selected for reallocation." };
+    }
     
-    // Check every 10 seconds
-    const intervalId = setInterval(checkAndReassignLeads, 10000);
-    return () => clearInterval(intervalId);
-  }, [leads, users, isAutoSyncEnabled]);
+    const now = Date.now();
+    
+    // Find all target assignees in our active roster
+    const targetAssignees: User[] = [];
+    const missingAgents: string[] = [];
+    
+    targetAgentNames.forEach(name => {
+      const uNameClean = name.trim().toLowerCase();
+      const found = users.find(
+        u => (u.name || "").trim().toLowerCase() === uNameClean && (u.role === "team_leader" || u.role === "sales_team")
+      );
+      if (found) {
+        targetAssignees.push(found);
+      } else {
+        missingAgents.push(name);
+      }
+    });
+    
+    if (targetAssignees.length === 0) {
+      return { 
+        success: false, 
+        count: 0, 
+        error: "None of the selected recipient advisors could be located in directory." 
+      };
+    }
+
+    const updatedLeads: Lead[] = [];
+    const newEditLogs: LeadEditLog[] = [];
+    const newNotifications: AppNotification[] = [];
+
+    // Filter leads that belong to leadIds list
+    const leadsToTransfer = leads.filter(l => leadIds.includes(l.id));
+
+    leadsToTransfer.forEach((lead, index) => {
+      // Round-robin index selection across chosen checklists
+      const newAssignee = targetAssignees[index % targetAssignees.length];
+      
+      lastLocalUpdateRef.current[lead.id] = now;
+      const oldAgent = lead.assignedAgent || "Unassigned";
+      
+      if (oldAgent.trim().toLowerCase() === newAssignee.name.trim().toLowerCase()) {
+        return;
+      }
+
+      const finalUpdated: Lead = {
+        ...lead,
+        assignedAgent: newAssignee.name,
+        assignedTlId: newAssignee.id,
+        assignmentTimestamp: now,
+        lastActionTimestamp: now,
+        reassignedTimestamp: now,
+        dateUpdated: new Date().toISOString().split("T")[0]
+      };
+
+      updatedLeads.push(finalUpdated);
+
+      // Edit log representation
+      const newLog: LeadEditLog = {
+        id: "edit-log-bulk-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+        leadId: lead.id,
+        leadName: lead.name,
+        editorName: currentUser.name,
+        editorRole: currentUser.role,
+        timestamp: new Date().toLocaleString("en-US", { 
+          timeStyle: "medium", 
+          dateStyle: "medium",
+          timeZone: "UTC"
+        }) + " UTC",
+        changes: [
+          { field: "assignedAgent", oldValue: oldAgent, newValue: newAssignee.name }
+        ]
+      };
+      newEditLogs.push(newLog);
+
+      // Assignment notifications
+      const notif: AppNotification = {
+        id: "notif-bulk-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+        recipientName: newAssignee.name,
+        title: "Bulk Reallocation Assignment",
+        message: `Investor lead "${lead.name}" has been transferred to you as part of a bulk status reallocation by ${currentUser.name}.`,
+        source: lead.source,
+        timestamp: new Date().toLocaleString("en-US", { 
+          timeStyle: "short", 
+          dateStyle: "medium"
+        }),
+        isRead: false,
+        type: "assignment",
+        leadId: lead.id,
+        leadName: lead.name
+      };
+      newNotifications.push(notif);
+    });
+
+    if (updatedLeads.length === 0) {
+      return { success: true, count: 0 };
+    }
+
+    setLeads(prev => prev.map(l => {
+      const match = updatedLeads.find(ul => ul.id === l.id);
+      return match ? match : l;
+    }));
+
+    setLeadEditLogs(prev => [...newEditLogs, ...prev]);
+    setNotifications(prev => [...newNotifications, ...prev]);
+
+    if (isAutoSyncEnabled) {
+      try {
+        const leadPromises = updatedLeads.map(l => dbUpsertLead(l));
+        const logPromises = newEditLogs.map(el => dbUpsertLeadEditLog(el));
+        const results = await Promise.all([...leadPromises, ...logPromises]);
+        const errors = results.filter(r => !r.success).map(r => r.error);
+        if (errors.length > 0) {
+          console.warn("[Bulk Reassignment database sync warnings]:", errors);
+        }
+      } catch (err: any) {
+        console.warn("[Bulk Reassignment sync exception]:", err);
+      }
+    }
+
+    return { success: true, count: updatedLeads.length };
+  };
+
 
   // Handler: Update Lead
   const handleUpdateLead = async (updated: Lead) => {
@@ -2362,6 +2206,7 @@ export default function App() {
             onUpdateLead={handleUpdateLead}
             onDeleteLead={handleDeleteLead}
             onBulkDeleteLeads={handleBulkDeleteLeads}
+            onBulkTransferLeads={handleBulkTransferLeads}
             communicationLogs={communicationLogs}
             onAddCommunicationLog={handleAddCommunicationLog}
             darkMode={darkMode}

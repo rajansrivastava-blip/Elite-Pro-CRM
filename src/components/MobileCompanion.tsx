@@ -302,6 +302,8 @@ export default function MobileCompanion({
                           <option value="Not Pick">🔇 Not Pick</option>
                           <option value="Switched Off">📴 Switched Off</option>
                           <option value="Low Budget">📉 Low Budget</option>
+                          <option value="Junk">🗑️ Junk</option>
+                          <option value="Duplicate">👥 Duplicate</option>
                         </select>
                       </div>
 

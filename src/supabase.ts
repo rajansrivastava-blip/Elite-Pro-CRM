@@ -577,6 +577,9 @@ export async function dbUpsertUser(user: User): Promise<{ success: boolean; erro
       body: JSON.stringify(dbPayload)
     });
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-user) returned 404. Direct database write bypassed because a secret API key is configured." };
+      }
       console.warn("[dbUpsertUser] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("users", dbPayload);
       return { success, error: error?.message };
@@ -588,6 +591,9 @@ export async function dbUpsertUser(user: User): Promise<{ success: boolean; erro
     return { success: true };
   } catch (err: any) {
     console.warn("[dbUpsertUser] Server route failed, performing direct socket write:", err);
+    if (isKeySecret()) {
+      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+    }
     const { success, error } = await resilientClientUpsert("users", dbPayload);
     return { success, error: error?.message };
   }
@@ -660,6 +666,9 @@ export async function dbUpsertLead(lead: Lead): Promise<{ success: boolean; erro
       body: JSON.stringify(dbPayload)
     });
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-lead) returned 404. Direct database write bypassed because a secret API key is configured." };
+      }
       console.warn("[dbUpsertLead] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("leads", dbPayload);
       return { success, error: error?.message };
@@ -671,6 +680,9 @@ export async function dbUpsertLead(lead: Lead): Promise<{ success: boolean; erro
     return { success: true };
   } catch (err: any) {
     console.warn("[dbUpsertLead] Server connection bypassed, using direct lead upsert fallback:", err);
+    if (isKeySecret()) {
+      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+    }
     const { success, error } = await resilientClientUpsert("leads", dbPayload);
     return { success, error: error?.message };
   }
@@ -707,6 +719,9 @@ export async function dbUpsertAppointment(app: Appointment): Promise<{ success: 
       body: JSON.stringify(dbPayload)
     });
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-appointment) returned 404. Direct database write bypassed because a secret API key is configured." };
+      }
       console.warn("[dbUpsertAppointment] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("appointments", dbPayload);
       return { success, error: error?.message };
@@ -718,6 +733,9 @@ export async function dbUpsertAppointment(app: Appointment): Promise<{ success: 
     return { success: true };
   } catch (err: any) {
     console.warn("[dbUpsertAppointment] Server connection bypassed, using direct appointment upsert fallback:", err);
+    if (isKeySecret()) {
+      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+    }
     const { success, error } = await resilientClientUpsert("appointments", dbPayload);
     return { success, error: error?.message };
   }
@@ -754,6 +772,9 @@ export async function dbUpsertCommunicationLog(log: CommunicationLog): Promise<{
       body: JSON.stringify(dbPayload)
     });
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-communication-log) returned 404. Direct database write bypassed because a secret API key is configured." };
+      }
       console.warn("[dbUpsertCommunicationLog] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("communication_logs", dbPayload);
       return { success, error: error?.message };
@@ -765,6 +786,9 @@ export async function dbUpsertCommunicationLog(log: CommunicationLog): Promise<{
     return { success: true };
   } catch (err: any) {
     console.warn("[dbUpsertCommunicationLog] Server connection bypassed, using direct log upsert fallback:", err);
+    if (isKeySecret()) {
+      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+    }
     const { success, error } = await resilientClientUpsert("communication_logs", dbPayload);
     return { success, error: error?.message };
   }
@@ -779,6 +803,9 @@ export async function dbUpsertLeadEditLog(log: LeadEditLog): Promise<{ success: 
       body: JSON.stringify(dbPayload)
     });
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-lead-edit-log) returned 404. Direct database write bypassed because a secret API key is configured." };
+      }
       console.warn("[dbUpsertLeadEditLog] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("lead_edit_logs", dbPayload);
       return { success, error: error?.message };
@@ -790,6 +817,9 @@ export async function dbUpsertLeadEditLog(log: LeadEditLog): Promise<{ success: 
     return { success: true };
   } catch (err: any) {
     console.warn("[dbUpsertLeadEditLog] Server connection bypassed, using direct track changes fallback:", err);
+    if (isKeySecret()) {
+      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+    }
     const { success, error } = await resilientClientUpsert("lead_edit_logs", dbPayload);
     return { success, error: error?.message };
   }
