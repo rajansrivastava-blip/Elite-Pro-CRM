@@ -453,15 +453,27 @@ export async function pushLocalDataToSupabase(data: {
       body: JSON.stringify(payload)
     });
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return {
+          success: false,
+          errors: ["CRM backend proxy endpoint /api/db/push returned 404. Since a Secret/Service Role API key is configured, direct client-side database writes are disabled for security. Please make sure the full-stack server is running and configured."]
+        };
+      }
       console.warn("[pushLocalDataToSupabase] /api/db/push returned 404. Falling back to browser direct socket push.");
       return await pushLocalClientData(payload);
     }
     const parsed = await res.json();
     if (!res.ok) {
-      return { success: false, errors: [parsed.error || "Push operation query rejected."] };
+      return { success: false, errors: [parsed.error || `Push operation query rejected (HTTP ${res.status}).`] };
     }
     return { success: parsed.success, errors: parsed.errors || [] };
   } catch (err: any) {
+    if (isKeySecret()) {
+      return {
+        success: false,
+        errors: [`CRM backend connection failed: ${err.message || String(err)}. Direct client-side database write bypassed because a Secret/Service Role API key is configured.`]
+      };
+    }
     console.warn("[pushLocalDataToSupabase] REST proxy offline, triggering direct database bypass:", err);
     return await pushLocalClientData(payload);
   }
@@ -578,7 +590,7 @@ export async function dbUpsertUser(user: User): Promise<{ success: boolean; erro
     });
     if (res.status === 404) {
       if (isKeySecret()) {
-        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-user) returned 404. Direct database write bypassed because a secret API key is configured." };
+        return { success: false, error: "CRM backend proxy endpoint /api/db/upsert-user returned 404. Direct client-side write is disabled for security when a Secret API key is configured." };
       }
       console.warn("[dbUpsertUser] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("users", dbPayload);
@@ -590,12 +602,13 @@ export async function dbUpsertUser(user: User): Promise<{ success: boolean; erro
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbUpsertUser] Server route failed, performing direct socket write:", err);
     if (isKeySecret()) {
-      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+      return { success: false, error: `CRM backend connection failed: ${err.message || String(err)}. Direct client-side write bypassed because a Secret API key is configured.` };
     }
+    console.warn("[dbUpsertUser] Server route failed, performing direct socket write:", err);
+    console.warn("[Bypass warning] Proxy connection failed. Executing direct write fallback.");
     const { success, error } = await resilientClientUpsert("users", dbPayload);
-    return { success, error: error?.message };
+    return { success, error: error?.message || err.message || String(err) };
   }
 }
 
@@ -608,9 +621,6 @@ export async function dbGetUser(id: string): Promise<{ user: User | null; error?
     });
     if (res.status === 404) {
       console.warn("[dbGetUser] Fallback to client-side direct query.");
-      if (isKeySecret()) {
-        return { user: null, error: "Direct database access bypassed: A secret API key is configured. Please sync via the CRM backend proxy instead." };
-      }
       const { data, error } = await clientSupabase.from("users").select("*").eq("id", id).maybeSingle();
       if (error) return { user: null, error: error.message };
       return { user: data ? mapUserFromDb(data) : null };
@@ -622,9 +632,6 @@ export async function dbGetUser(id: string): Promise<{ user: User | null; error?
     return { user: parsed.user ? mapUserFromDb(parsed.user) : null };
   } catch (err: any) {
     console.warn("[dbGetUser] Server route failed, performing direct schema retrieval:", err);
-    if (isKeySecret()) {
-      return { user: null, error: "Direct database access bypassed: A secret API key is configured. Please sync via the CRM backend proxy instead." };
-    }
     try {
       const { data, error } = await clientSupabase.from("users").select("*").eq("id", id).maybeSingle();
       if (error) return { user: null, error: error.message };
@@ -667,7 +674,7 @@ export async function dbUpsertLead(lead: Lead): Promise<{ success: boolean; erro
     });
     if (res.status === 404) {
       if (isKeySecret()) {
-        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-lead) returned 404. Direct database write bypassed because a secret API key is configured." };
+        return { success: false, error: "CRM backend proxy endpoint /api/db/upsert-lead returned 404. Direct client-side write is disabled for security when a Secret API key is configured." };
       }
       console.warn("[dbUpsertLead] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("leads", dbPayload);
@@ -679,12 +686,13 @@ export async function dbUpsertLead(lead: Lead): Promise<{ success: boolean; erro
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbUpsertLead] Server connection bypassed, using direct lead upsert fallback:", err);
     if (isKeySecret()) {
-      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+      return { success: false, error: `CRM backend connection failed: ${err.message || String(err)}. Direct client-side write bypassed because a Secret API key is configured.` };
     }
+    console.warn("[dbUpsertLead] Server connection bypassed, using direct lead upsert fallback:", err);
+    console.warn("[Bypass warning] Proxy connection failed. Executing direct write fallback.");
     const { success, error } = await resilientClientUpsert("leads", dbPayload);
-    return { success, error: error?.message };
+    return { success, error: error?.message || err.message || String(err) };
   }
 }
 
@@ -720,7 +728,7 @@ export async function dbUpsertAppointment(app: Appointment): Promise<{ success: 
     });
     if (res.status === 404) {
       if (isKeySecret()) {
-        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-appointment) returned 404. Direct database write bypassed because a secret API key is configured." };
+        return { success: false, error: "CRM backend proxy endpoint /api/db/upsert-appointment returned 404. Direct client-side write is disabled for security when a Secret API key is configured." };
       }
       console.warn("[dbUpsertAppointment] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("appointments", dbPayload);
@@ -732,12 +740,13 @@ export async function dbUpsertAppointment(app: Appointment): Promise<{ success: 
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbUpsertAppointment] Server connection bypassed, using direct appointment upsert fallback:", err);
     if (isKeySecret()) {
-      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+      return { success: false, error: `CRM backend connection failed: ${err.message || String(err)}. Direct client-side write bypassed because a Secret API key is configured.` };
     }
+    console.warn("[dbUpsertAppointment] Server connection bypassed, using direct appointment upsert fallback:", err);
+    console.warn("[Bypass warning] Proxy connection failed. Executing direct write fallback.");
     const { success, error } = await resilientClientUpsert("appointments", dbPayload);
-    return { success, error: error?.message };
+    return { success, error: error?.message || err.message || String(err) };
   }
 }
 
@@ -773,7 +782,7 @@ export async function dbUpsertCommunicationLog(log: CommunicationLog): Promise<{
     });
     if (res.status === 404) {
       if (isKeySecret()) {
-        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-communication-log) returned 404. Direct database write bypassed because a secret API key is configured." };
+        return { success: false, error: "CRM backend proxy endpoint /api/db/upsert-communication-log returned 404. Direct client-side write is disabled for security when a Secret API key is configured." };
       }
       console.warn("[dbUpsertCommunicationLog] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("communication_logs", dbPayload);
@@ -785,12 +794,13 @@ export async function dbUpsertCommunicationLog(log: CommunicationLog): Promise<{
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbUpsertCommunicationLog] Server connection bypassed, using direct log upsert fallback:", err);
     if (isKeySecret()) {
-      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+      return { success: false, error: `CRM backend connection failed: ${err.message || String(err)}. Direct client-side write bypassed because a Secret API key is configured.` };
     }
+    console.warn("[dbUpsertCommunicationLog] Server connection bypassed, using direct log upsert fallback:", err);
+    console.warn("[Bypass warning] Proxy connection failed. Executing direct write fallback.");
     const { success, error } = await resilientClientUpsert("communication_logs", dbPayload);
-    return { success, error: error?.message };
+    return { success, error: error?.message || err.message || String(err) };
   }
 }
 
@@ -804,7 +814,7 @@ export async function dbUpsertLeadEditLog(log: LeadEditLog): Promise<{ success: 
     });
     if (res.status === 404) {
       if (isKeySecret()) {
-        return { success: false, error: "Enterprise CRM backend proxy route (/api/db/upsert-lead-edit-log) returned 404. Direct database write bypassed because a secret API key is configured." };
+        return { success: false, error: "CRM backend proxy endpoint /api/db/upsert-lead-edit-log returned 404. Direct client-side write is disabled for security when a Secret API key is configured." };
       }
       console.warn("[dbUpsertLeadEditLog] Fallback to client-side direct upsert.");
       const { success, error } = await resilientClientUpsert("lead_edit_logs", dbPayload);
@@ -816,12 +826,13 @@ export async function dbUpsertLeadEditLog(log: LeadEditLog): Promise<{ success: 
     }
     return { success: true };
   } catch (err: any) {
-    console.warn("[dbUpsertLeadEditLog] Server connection bypassed, using direct track changes fallback:", err);
     if (isKeySecret()) {
-      return { success: false, error: `CRM backend proxy connection failed (${err.message || String(err)}). Direct database write bypassed because a secret API key is configured.` };
+      return { success: false, error: `CRM backend connection failed: ${err.message || String(err)}. Direct client-side write bypassed because a Secret API key is configured.` };
     }
+    console.warn("[dbUpsertLeadEditLog] Server connection bypassed, using direct track changes fallback:", err);
+    console.warn("[Bypass warning] Proxy connection failed. Executing direct write fallback.");
     const { success, error } = await resilientClientUpsert("lead_edit_logs", dbPayload);
-    return { success, error: error?.message };
+    return { success, error: error?.message || err.message || String(err) };
   }
 }
 
@@ -921,6 +932,12 @@ export async function dbBulkUpsert(data: {
     });
     
     if (res.status === 404) {
+      if (isKeySecret()) {
+        return {
+          success: false,
+          error: "CRM backend proxy endpoint /api/db/push returned 404. Since a Secret/Service Role API key is configured, direct client-side database writes are disabled for security. Please make sure the full-stack server is running and configured."
+        };
+      }
       console.warn("[dbBulkUpsert] /api/db/push returned 404. Falling back to direct client bulk insert.");
       const result = await pushLocalClientData(payload);
       return { success: result.success, error: result.errors?.join(", ") };
@@ -936,6 +953,12 @@ export async function dbBulkUpsert(data: {
     }
     return { success: true };
   } catch (err: any) {
+    if (isKeySecret()) {
+      return {
+        success: false,
+        error: `CRM backend connection failed: ${err.message || String(err)}. Direct client-side database write bypassed because a Secret/Service Role API key is configured.`
+      };
+    }
     console.warn("[dbBulkUpsert] Direct REST proxy offline, sending to database directly:", err);
     const result = await pushLocalClientData(payload);
     return { success: result.success, error: result.errors?.join(", ") };

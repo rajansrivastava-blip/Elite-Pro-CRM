@@ -451,7 +451,7 @@ export default function SystemSync({
       localStorage.setItem("google_sheets_last_sync_time", updatedTime);
 
       setSheetsFeedback({
-        message: `Sync Completed successfully: Analyzed ${rows.length - 1} records from sheet. Ingested ${filteredNewLeads.length} new leads into CRM (skipped ${parsedLeads.length - filteredNewLeads.length} duplicates). Leads matching Sales Team or TL names are transferred, unmatched assigned to Admin.`,
+        message: `Sync Completed successfully: Analyzed ${rows.length - 1} records from sheet. Ingested ${filteredNewLeads.length} new leads into CRM (skipped ${parsedLeads.length - filteredNewLeads.length} duplicates). Leads are staged as Pending Assignment.`,
         type: "success"
       });
 
@@ -1044,7 +1044,7 @@ ALTER TABLE public.lead_edit_logs DISABLE ROW LEVEL SECURITY;`;
 
             <h4 className="font-display font-bold text-base">Google Sheets Ingestion</h4>
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Fetches records from connected Google Spreadsheets, processes contact structures, and transfers new leads directly to the CRM (fully auto-assigning to Admin).
+              Fetches records from connected Google Spreadsheets, processes contact structures, and transfers new leads directly to the CRM (defaulting to Pending Assignment for manual allocation).
             </p>
             <div className={`mt-2 p-2.5 rounded-xl border text-[11px] leading-relaxed flex gap-2 items-start
               ${darkMode ? "bg-teal-500/5 border-teal-500/10 text-slate-400" : "bg-teal-50/50 border-teal-100/50 text-slate-600"}`}

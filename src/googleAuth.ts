@@ -345,28 +345,8 @@ export function mapSpreadsheetRowsToLeads(
     const notes = notesIdx !== -1 ? String(row[notesIdx] || "").trim() : "Ingested from Google Sheets pipeline.";
     const projectName = projectIdx !== -1 ? String(row[projectIdx] || "").trim() : "";
 
-    // Automatically assign to matching Sales Team or TL, otherwise fallback to "Admin"
-    let assignedAgent = "Admin";
-    const usersToSearch = systemUsers && systemUsers.length > 0 ? systemUsers : PRESET_USERS;
-    let assignmentMatched = false;
-
-    if (agentIdx !== -1 && row[agentIdx] !== undefined) {
-      const parsedAgentName = String(row[agentIdx]).trim();
-      if (parsedAgentName) {
-        const matchedUser = usersToSearch.find(u => {
-          const uName = (u.name || "").toLowerCase().trim();
-          const targetName = parsedAgentName.toLowerCase().trim();
-          return uName === targetName;
-        });
-
-        // Ensure we only auto-assign to users who are active (active !== false)
-        if (matchedUser && matchedUser.active !== false && (matchedUser.role === "sales_team" || matchedUser.role === "team_leader" || matchedUser.role === "admin")) {
-          assignedAgent = matchedUser.name;
-          assignmentMatched = true;
-        }
-      }
-    }
-
+    // Stop automatically assigning leads to assignee members. All new ingested leads default to "Pending Assignment" for manual allocation.
+    let assignedAgent = "Pending Assignment";
     const lastCommunication = new Date().toISOString().split("T")[0];
 
     resultLeads.push({

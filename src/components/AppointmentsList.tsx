@@ -38,8 +38,11 @@ interface AppointmentsListProps {
   currentUser: AppUser | null;
   onAddAppointment: (app: Omit<Appointment, "id" | "isCompleted">) => void;
   onUpdateAppointment: (app: Appointment) => void;
-  onDeleteAppointment: (id: string) => void;
+  onDeleteAppointment: (id: string, skipConfirm?: boolean) => void;
   darkMode: boolean;
+  onClearAllAppointments?: () => void;
+  triggerConfirm?: (title: string, message: string, onConfirm: () => void) => void;
+  triggerAlert?: (title: string, message: string) => void;
 }
 
 export default function AppointmentsList({
@@ -50,7 +53,10 @@ export default function AppointmentsList({
   onAddAppointment,
   onUpdateAppointment,
   onDeleteAppointment,
-  darkMode
+  darkMode,
+  onClearAllAppointments,
+  triggerConfirm,
+  triggerAlert
 }: AppointmentsListProps) {
   
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -419,14 +425,41 @@ export default function AppointmentsList({
           </div>
         </div>
 
-        <button
-          id="create-appt-modal-btn"
-          onClick={() => setIsAddModalOpen(true)}
-          className="px-4.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-medium text-xs transition flex items-center gap-2 cursor-pointer shadow-md shadow-teal-500/5 select-none"
-        >
-          <Plus size={15} />
-          Schedule Advisory Session
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {appointments.length > 0 && onClearAllAppointments && (
+            <button
+               id="clear-all-reminders-global-btn"
+              type="button"
+              onClick={() => {
+                const handleClear = () => {
+                  onClearAllAppointments();
+                };
+                if (triggerConfirm) {
+                  triggerConfirm(
+                    "Remove All Set Reminders",
+                    "⚠️ WARNING: This will permanently delete and remove all scheduled reminders and advisory alignment agendas across the entire CRM system. Are you sure you want to remove all set reminders?",
+                    handleClear
+                  );
+                } else if (window.confirm("⚠️ WARNING: This will permanently delete and remove all scheduled reminders and advisory alignment agendas across the entire CRM system.\n\nAre you sure you want to remove all set reminders?")) {
+                  handleClear();
+                }
+              }}
+              className="px-4 py-2.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-450 hover:text-rose-400 font-semibold text-xs tracking-wide transition flex items-center gap-2 cursor-pointer active:scale-95 select-none"
+            >
+              <Trash2 size={14} />
+              Remove All Set Reminders
+            </button>
+          )}
+
+          <button
+            id="create-appt-modal-btn"
+            onClick={() => setIsAddModalOpen(true)}
+            className="px-4.5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-medium text-xs transition flex items-center gap-2 cursor-pointer shadow-md shadow-teal-500/5 select-none"
+          >
+            <Plus size={15} />
+            Schedule Advisory Session
+          </button>
+        </div>
       </div>
 
       {/* Reminder Strategy & Status Filter Control Bento Grid */}

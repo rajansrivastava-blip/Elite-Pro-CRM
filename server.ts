@@ -9,8 +9,8 @@ import { createClient } from "@supabase/supabase-js";
 dotenv.config();
 
 // Initialize backend Supabase Client, auto-correcting any misplaced/swapped keys from environment secrets
-let SUPABASE_URL = (process.env.VITE_SUPABASE_URL || "https://fzsjeukjjjutiihhzjgu.supabase.co").trim();
-let SUPABASE_ANON_KEY = (process.env.VITE_SUPABASE_ANON_KEY || "sb_publishable_PTNuV0AtVvNGIUKk9P6nIA_DcgGCrk1").trim();
+let SUPABASE_URL = (process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || "https://fzsjeukjjjutiihhzjgu.supabase.co").trim();
+let SUPABASE_ANON_KEY = (process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "sb_publishable_PTNuV0AtVvNGIUKk9P6nIA_DcgGCrk1").trim();
 
 // Swapped configuration recovery: If key got parsed as URL by mistake, reset URL to target cluster
 if (SUPABASE_URL.startsWith("sb_publishable_") || SUPABASE_URL.startsWith("sb_secret_")) {
@@ -30,27 +30,11 @@ if (!formattedUrl || typeof formattedUrl !== "string" || !formattedUrl.startsWit
   formattedUrl = "https://fzsjeukjjjutiihhzjgu.supabase.co";
 }
 
-// Create a robust server client config. We pass auth setup and override/strip origin-headers
-// in case client's browser context gets forwarded, preventing the Supabase Edge Gateway
-// from misidentifying our Node server as a web browser.
+// Create a robust server client config. We pass auth setup to prevent token persistence issues.
 const supabase = createClient(formattedUrl, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: false,
     detectSessionInUrl: false
-  },
-  global: {
-    fetch: (url, options) => {
-      const headers = new Headers(options?.headers);
-      headers.delete("origin");
-      headers.delete("referer");
-      headers.delete("sec-fetch-mode");
-      headers.delete("sec-fetch-site");
-      headers.delete("sec-fetch-dest");
-      return fetch(url, {
-        ...options,
-        headers
-      });
-    }
   }
 });
 
@@ -928,8 +912,25 @@ app.post("/api/db/upsert-appointment", async (req, res) => {
 app.post("/api/db/delete-appointment", async (req, res) => {
   try {
     const { id } = req.body;
-    console.log(`[Supabase Proxy] Bypassed actual removal of appointment "${id}" in line with database permanence and history saving instructions.`);
-    return res.json({ success: true, bypassed: true });
+    const { error } = await supabase.from("appointments").delete().eq("id", id);
+    if (error) {
+      console.error(`[Supabase Proxy] Direct deletion failed for appointment "${id}":`, error);
+      return res.status(400).json({ error: error.message });
+    }
+    console.log(`[Supabase Proxy] Deleted appointment "${id}" from Supabase.`);
+    return res.json({ success: true, bypassed: false });
+  } catch (err: any) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/api/db/clear-all-appointments", async (req, res) => {
+  try {
+    const { error } = await supabase.from("appointments").delete().neq("id", "_nonexistent_id_");
+    if (error) {
+      console.error("[Supabase Proxy] Bulk deletion of appointments failed:", error);
+      return res.status(400).json({ error: error.message });
+    }
+    console.log("[Supabase Proxy] Cleared all appointments from Supabase.");
+    return res.json({ success: true });
   } catch (err: any) { return res.status(500).json({ error: err.message }); }
 });
 

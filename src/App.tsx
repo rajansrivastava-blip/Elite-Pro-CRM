@@ -246,15 +246,20 @@ export default function App() {
   const [lastMetaSynced, setLastMetaSynced] = useState<string>(() => localStorage.getItem("meta_last_synced_time") || "Never");
 
   const [settingsLoaded, setSettingsLoaded] = useState<boolean>(false);
+  const [settingsLoadedSuccessfully, setSettingsLoadedSuccessfully] = useState<boolean>(false);
 
   // Load from backend server persistently on mount (to restore sheet url on any device/refresh)
   useEffect(() => {
-    fetch("/api/settings")
-      .then(res => {
-        if (!res.ok) throw new Error("Load failed");
-        return res.json();
-      })
-      .then(data => {
+    let active = true;
+    const loadSettingsWithRetry = async (retriesLeft = 3, delay = 1000) => {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) {
+          throw new Error(`Load failed with HTTP status ${res.status}`);
+        }
+        const data = await res.json();
+        if (!active) return;
+        
         if (data) {
           if (data.sheetUrl !== undefined) setSheetUrl(data.sheetUrl);
           if (data.sheetRange !== undefined) setSheetRange(data.sheetRange);
@@ -264,12 +269,29 @@ export default function App() {
           if (data.metaAutoIngest !== undefined) setMetaAutoIngest(!!data.metaAutoIngest);
           if (data.lastMetaSynced !== undefined) setLastMetaSynced(data.lastMetaSynced || "Never");
         }
+        setSettingsLoadedSuccessfully(true);
         setSettingsLoaded(true);
-      })
-      .catch(err => {
-        console.error("Failed to load server-side settings, falling back to local storage:", err);
-        setSettingsLoaded(true);
-      });
+      } catch (err: any) {
+        if (!active) return;
+        if (retriesLeft > 0) {
+          console.warn(`[Settings] Failed to load settings (${err.message || String(err)}). Retrying in ${delay}ms... (${retriesLeft} retries left)`);
+          setTimeout(() => {
+            if (active) loadSettingsWithRetry(retriesLeft - 1, delay * 1.5);
+          }, delay);
+        } else {
+          console.error("Failed to load server-side settings after multiple retries, falling back to local storage:", err);
+          // Set settingsLoadedSuccessfully to false to bypass autosaving and avoid empty-state overrides,
+          // but set settingsLoaded to true so the application can load from localStorage without blocking.
+          setSettingsLoadedSuccessfully(false);
+          setSettingsLoaded(true);
+        }
+      }
+    };
+
+    loadSettingsWithRetry();
+    return () => {
+      active = false;
+    };
   }, []);
 
   // Save config changes both to server and local storage persistently
@@ -285,6 +307,13 @@ export default function App() {
     localStorage.setItem("meta_auto_ingest", metaAutoIngest ? "true" : "false");
     localStorage.setItem("meta_last_synced_time", lastMetaSynced);
 
+    // Only save to backend if settings were successfully fetched on startup.
+    // This prevents overwriting server settings with local storage or state default values when loading failed.
+    if (!settingsLoadedSuccessfully) {
+      console.warn("[Settings] Server-side saving bypassed because configuration could not be successfully loaded from the server on startup.");
+      return;
+    }
+
     fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -298,7 +327,7 @@ export default function App() {
         lastMetaSynced
       })
     }).catch(err => console.error("Error saving server settings:", err));
-  }, [sheetUrl, sheetRange, autoSheetsSync, lastSheetsSynced, metaVerifyToken, metaAutoIngest, lastMetaSynced, settingsLoaded]);
+  }, [sheetUrl, sheetRange, autoSheetsSync, lastSheetsSynced, metaVerifyToken, metaAutoIngest, lastMetaSynced, settingsLoaded, settingsLoadedSuccessfully]);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncHistory, setSyncHistory] = useState<string[]>([]);
@@ -991,35 +1020,10 @@ export default function App() {
     }
 
 
-    // Also auto-generate general appointment follow-up for tomorrow relative to local time (today: 2026-05-25)
-    // to protect leads followups as requested: "Also, set reminder so that sales team can easily manage..."
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().split("T")[0];
-
-    const automaticAppt: Appointment = {
-      id: "app-auto-" + Math.random().toString(36).substr(2, 5),
-      leadId: id,
-      leadName: newLead.name,
-      title: `Automated Outreach Target: ${newLead.name}`,
-      date: tomorrowStr,
-      time: "09:00",
-      type: "followup",
-      notes: `Auto-generated follow-up reminder for fresh client ${newLead.name} via ${newLead.source}.`,
-      isCompleted: false,
-      reminderActive: true
-    };
-    setAppointments(prev => [automaticAppt, ...prev]);
-
     // Perform background db sync (only if Auto-Sync is enabled)
     if (isAutoSyncEnabled) {
       const leadRes = await dbUpsertLead(item);
-      if (leadRes.success) {
-        const apptRes = await dbUpsertAppointment(automaticAppt);
-        if (!apptRes.success) {
-          console.warn("Supabase Appointment Sync failed:", apptRes.error);
-        }
-      } else {
+      if (!leadRes.success) {
         console.warn("Supabase Lead Sync failed:", leadRes.error);
         triggerAlert(
           "Supabase Synchronization Warned",
@@ -1067,7 +1071,6 @@ export default function App() {
     }
 
     const newItems: Lead[] = [];
-    const newAppts: Appointment[] = [];
     
     // Create batch lists to execute
     uniqueNewLeads.forEach((nl, index) => {
@@ -1085,25 +1088,10 @@ export default function App() {
         lastActionTimestamp: nowTimestamp,
       };
       newItems.push(item);
-
-      const automaticAppt: Appointment = {
-        id: "app-auto-bulk-" + index + "-" + Math.random().toString(36).substr(2, 5),
-        leadId: id,
-        leadName: nl.name,
-        title: `Automated Outreach Target: ${nl.name}`,
-        date: tomorrowStr,
-        time: "09:00",
-        type: "followup",
-        notes: `Auto-generated follow-up reminder for imported client ${nl.name} via ${nl.source}.`,
-        isCompleted: false,
-        reminderActive: true
-      };
-      newAppts.push(automaticAppt);
     });
 
     leadsRef.current = [...newItems, ...leadsRef.current];
     setLeads(prev => [...newItems, ...prev]);
-    setAppointments(prev => [...newAppts, ...prev]);
 
     // Create notifications for assigned agents
     const rawBulkNotifs: AppNotification[] = [];
@@ -1137,7 +1125,7 @@ export default function App() {
     if (isSyncActiveCombined) {
       const dbRes = await dbBulkUpsert({
         leads: newItems,
-        appointments: newAppts
+        appointments: []
       });
 
       if (!dbRes.success) {
@@ -1390,16 +1378,21 @@ export default function App() {
             }
           });
 
-          // Handled transition lock logic: if local update happened key-wise < 10 seconds ago,
+          // Handled transition lock logic: if local update happened key-wise < 25 seconds ago,
+          // OR if the local version's lastActionTimestamp (or other modifications) is newer than the remote version,
           // maintain local values to allow database writes to finish and sync properly,
           // preventing race condition state flipping or defaults back to old status.
           const currentLeads = leadsRef.current || [];
           const nowTime = Date.now();
           const uniquePulledHandled = ensureStableTimestamps(uniquePulled.map(l => {
             const lastLocalTime = lastLocalUpdateRef.current[l.id];
-            if (lastLocalTime && nowTime - lastLocalTime < 10000) {
-              const localLead = currentLeads.find(cl => cl.id === l.id);
-              if (localLead) {
+            const localLead = currentLeads.find(cl => cl.id === l.id);
+            if (localLead) {
+              const localTime = lastLocalTime || 0;
+              const hasActiveLock = (nowTime - localTime < 25000);
+              const localUpdated = localLead.lastActionTimestamp || 0;
+              const remoteUpdated = l.lastActionTimestamp || 0;
+              if (hasActiveLock || localUpdated > remoteUpdated) {
                 return localLead;
               }
             }
@@ -1697,7 +1690,7 @@ export default function App() {
         // Clear if not TL or Sales Team
         finalUpdated.assignedTlId = undefined;
         finalUpdated.assignmentTimestamp = undefined;
-        finalUpdated.lastActionTimestamp = undefined;
+        finalUpdated.lastActionTimestamp = now;
       }
 
       const changes: { field: string; oldValue: string; newValue: string }[] = [];
@@ -1764,7 +1757,7 @@ export default function App() {
 
           const localTime = new Date().toLocaleTimeString();
           setSyncHistory(prev => [
-            `[${localTime}] - [AUTO REASSIGN STATUS] Queued automated notification parameters for ${newAssignee.name}`,
+            `[${localTime}] - [MANUAL ASSIGNMENT ALERT] Queued dispatch parameters for ${newAssignee.name}`,
             ...prev
           ]);
         }
@@ -1929,7 +1922,7 @@ export default function App() {
   };
 
   // Handler: Delete Appointment
-  const handleDeleteAppointment = (id: string) => {
+  const handleDeleteAppointment = (idOrIds: string | string[], skipConfirm = false) => {
     // Role-based Access Control authorization filter
     if (currentUser?.role === "sales_team") {
       triggerAlert(
@@ -1939,23 +1932,81 @@ export default function App() {
       return;
     }
 
-    setAppointments(prev => prev.filter(a => a.id !== id));
+    const ids = Array.isArray(idOrIds) ? idOrIds : [idOrIds];
+
+    if (skipConfirm) {
+      setAppointments(prev => prev.filter(a => !ids.includes(a.id)));
+      if (isAutoSyncEnabled) {
+        ids.forEach(id => {
+          dbDeleteAppointment(id).then(res => {
+            if (!res.success) {
+              console.warn("Appointment removal failed on Supabase:", res.error);
+              triggerAlert(
+                "Supabase Agenda Sync alert",
+                `Appointment unscheduled locally, but delete failed on Supabase.\n\nDatabase Error: "${res.error || "Missing table or network error"}"`
+              );
+            }
+          });
+        });
+      }
+      return;
+    }
+
     triggerConfirm(
       "Confirm Appointment Removal",
-      "Are you sure you want to delete this scheduled meeting? This changes live corporate agendas.",
+      ids.length > 1 
+        ? `Are you sure you want to delete these ${ids.length} scheduled meetings?`
+        : "Are you sure you want to delete this scheduled meeting? This changes live corporate agendas.",
       async () => {
+        setAppointments(prev => prev.filter(a => !ids.includes(a.id)));
         if (isAutoSyncEnabled) {
-          const res = await dbDeleteAppointment(id);
-          if (!res.success) {
-            console.warn("Appointment removal failed on Supabase:", res.error);
-            triggerAlert(
-              "Supabase Agenda Sync alert",
-              `Appointment unscheduled locally, but delete failed on Supabase.\n\nDatabase Error: "${res.error || "Missing table or network error"}"`
-            );
+          for (const id of ids) {
+            const res = await dbDeleteAppointment(id);
+            if (!res.success) {
+              console.warn("Appointment removal failed on Supabase:", res.error);
+              triggerAlert(
+                "Supabase Agenda Sync alert",
+                `Appointment unscheduled locally, but delete failed on Supabase.\n\nDatabase Error: "${res.error || "Missing table or network error"}"`
+              );
+            }
           }
         }
       }
     );
+  };
+
+  // Handler: Clear All Selected Reminders
+  const handleClearAllAppointments = async () => {
+    if (currentUser?.role === "sales_team") {
+      triggerAlert(
+        "Access Refused",
+        "Sales Advisor accounts are unauthorized to clear scheduled or completed appointments."
+      );
+      return;
+    }
+
+    setAppointments([]);
+    localStorage.setItem("elite_pro_appointments", JSON.stringify([]));
+
+    if (isAutoSyncEnabled) {
+      try {
+        const response = await fetch("/api/db/clear-all-appointments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" }
+        });
+        if (!response.ok) {
+          const resJson = await response.json();
+          console.warn("Failed to delete reminders on Supabase:", resJson.error);
+        }
+      } catch (err) {
+        console.warn("Failed to delete reminders from Supabase:", err);
+      }
+    }
+
+    setSyncHistory(prev => [
+      `[${new Date().toLocaleTimeString()}] - [REMINDERS PURGED] Cleared all scheduled appointments and active reminders globally.`,
+      ...prev
+    ]);
   };
 
   // Handler: Full Master Portfolios Recovery Restore
@@ -2213,6 +2264,12 @@ export default function App() {
             currentUser={currentUser}
             leadEditLogs={visibleLeadEditLogs}
             onClearLeadEditLogs={handleClearLeadEditLogs}
+            onAddAppointment={handleAddAppointment}
+            onUpdateAppointment={handleUpdateAppointment}
+            onDeleteAppointment={handleDeleteAppointment}
+            appointments={appointments}
+            triggerConfirm={triggerConfirm}
+            triggerAlert={triggerAlert}
           />
         );
       case "calendar":
@@ -2225,7 +2282,10 @@ export default function App() {
             onAddAppointment={handleAddAppointment}
             onUpdateAppointment={handleUpdateAppointment}
             onDeleteAppointment={handleDeleteAppointment}
+            onClearAllAppointments={handleClearAllAppointments}
             darkMode={darkMode}
+            triggerConfirm={triggerConfirm}
+            triggerAlert={triggerAlert}
           />
         );
       case "reports":

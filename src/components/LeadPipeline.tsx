@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from "react";
-import { Lead, CommunicationLog, User, LeadEditLog } from "../types";
+import { Lead, CommunicationLog, User, LeadEditLog, Appointment, AppointmentType } from "../types";
 import * as XLSX from "xlsx";
 import { 
   Search, 
@@ -30,7 +30,8 @@ import {
   Upload,
   FileSpreadsheet,
   Download,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Bell
 } from "lucide-react";
 
 
@@ -55,6 +56,12 @@ interface LeadPipelineProps {
   currentUser?: User | null;
   leadEditLogs?: LeadEditLog[];
   onClearLeadEditLogs?: (type: "transfer" | "edit" | "all") => void;
+  onAddAppointment?: (appt: Omit<Appointment, "id" | "isCompleted">) => void;
+  onUpdateAppointment?: (appt: Appointment) => void;
+  onDeleteAppointment?: (idOrIds: string | string[], skipConfirm?: boolean) => void;
+  appointments?: Appointment[];
+  triggerConfirm?: (title: string, message: string, onConfirm: () => void) => void;
+  triggerAlert?: (title: string, message: string) => void;
 }
 
 export default function LeadPipeline({
@@ -71,7 +78,13 @@ export default function LeadPipeline({
   darkMode,
   currentUser,
   leadEditLogs = [],
-  onClearLeadEditLogs
+  onClearLeadEditLogs,
+  onAddAppointment,
+  onUpdateAppointment,
+  onDeleteAppointment,
+  appointments = [],
+  triggerConfirm,
+  triggerAlert
 }: LeadPipelineProps) {
   const isSalesOrTL = currentUser?.role === "sales_team" || currentUser?.role === "team_leader";
 
@@ -346,6 +359,134 @@ export default function LeadPipeline({
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
   const [selectedLeadForAI, setSelectedLeadForAI] = useState<Lead | null>(null);
 
+  // Set Reminder Modal States
+  const [reminderModalLead, setReminderModalLead] = useState<Lead | null>(null);
+  const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
+  const [reminderTitle, setReminderTitle] = useState("");
+  const [reminderType, setReminderType] = useState<AppointmentType>("followup");
+  const [reminderDate, setReminderDate] = useState("");
+  const [reminderTime, setReminderTime] = useState("");
+  const [reminderNotes, setReminderNotes] = useState("");
+  const [reminderAlert, setReminderAlert] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  const openReminderModal = (lead: Lead) => {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    const defaultDate = `${yyyy}-${mm}-${dd}`;
+
+    setReminderModalLead(lead);
+
+    // Find incomplete reminders for this lead
+    const leadReminders = appointments.filter(app => app.leadId === lead.id && !app.isCompleted);
+    if (leadReminders.length > 0) {
+      // Default to editing the latest incomplete reminder
+      const newestRem = leadReminders[0];
+      setEditingReminderId(newestRem.id);
+      setReminderTitle(newestRem.title);
+      setReminderType(newestRem.type);
+      setReminderDate(newestRem.date);
+      setReminderTime(newestRem.time);
+      setReminderNotes(newestRem.notes || "");
+    } else {
+      // default setup mode
+      setEditingReminderId(null);
+      setReminderTitle(`Follow-up with ${lead.name}`);
+      setReminderType("followup");
+      setReminderDate(defaultDate);
+      setReminderTime("12:00");
+      setReminderNotes(lead.projectName ? `Discuss project: ${lead.projectName} (Budget Plan: ${lead.budget || "N/A"})` : "Discuss real estate requirements.");
+    }
+    setReminderAlert(null);
+  };
+
+  const handleCreateOrUpdateReminder = () => {
+    if (!reminderModalLead) return;
+    if (!reminderTitle.trim()) {
+      setReminderAlert({ type: "error", message: "Reminder title is required." });
+      return;
+    }
+    if (!reminderDate) {
+      setReminderAlert({ type: "error", message: "Reminder date is required." });
+      return;
+    }
+    if (!reminderTime) {
+      setReminderAlert({ type: "error", message: "Reminder time is required." });
+      return;
+    }
+
+    if (editingReminderId) {
+      if (onUpdateAppointment) {
+        onUpdateAppointment({
+          id: editingReminderId,
+          leadId: reminderModalLead.id,
+          leadName: reminderModalLead.name,
+          title: reminderTitle.trim(),
+          date: reminderDate,
+          time: reminderTime,
+          type: reminderType,
+          notes: reminderNotes.trim(),
+          isCompleted: false,
+          reminderActive: true
+        });
+
+        setReminderAlert({ 
+          type: "success", 
+          message: `Successfully updated reminder "${reminderTitle.trim()}"!`
+        });
+
+        setTimeout(() => {
+          setReminderModalLead(null);
+          setEditingReminderId(null);
+        }, 1500);
+      } else {
+        setReminderAlert({ type: "error", message: "Appointment update handler is not available." });
+      }
+    } else {
+      if (onAddAppointment) {
+        onAddAppointment({
+          leadId: reminderModalLead.id,
+          leadName: reminderModalLead.name,
+          title: reminderTitle.trim(),
+          date: reminderDate,
+          time: reminderTime,
+          type: reminderType,
+          notes: reminderNotes.trim(),
+          reminderActive: true
+        });
+        
+        setReminderAlert({ 
+          type: "success", 
+          message: `Successfully scheduled reminder "${reminderTitle.trim()}" on ${reminderDate} at ${reminderTime}!`
+        });
+        
+        setTimeout(() => {
+          setReminderModalLead(null);
+        }, 1500);
+      } else {
+        setReminderAlert({ type: "error", message: "Appointment creation handler is not available." });
+      }
+    }
+  };
+
+  const startNewReminderForm = () => {
+    if (!reminderModalLead) return;
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, "0");
+    const dd = String(today.getDate()).padStart(2, "0");
+    
+    setEditingReminderId(null);
+    setReminderTitle(`Follow-up with ${reminderModalLead.name}`);
+    setReminderType("followup");
+    setReminderDate(`${yyyy}-${mm}-${dd}`);
+    setReminderTime("12:00");
+    setReminderNotes("");
+    setReminderAlert({ type: "success", message: "Switched to creating a new reminder." });
+    setTimeout(() => setReminderAlert(null), 1200);
+  };
+
   // CSV/Excel Importer States
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
@@ -355,6 +496,7 @@ export default function LeadPipeline({
 
   // Bulk Status Transfer States
   const [isBulkTransferModalOpen, setIsBulkTransferModalOpen] = useState(false);
+  const [bulkTransferUseSelected, setBulkTransferUseSelected] = useState(false);
   const [bulkSourceStatus, setBulkSourceStatus] = useState<string>("New Lead");
   const [bulkSourceAgent, setBulkSourceAgent] = useState<string>("All");
   const [bulkTargetAgents, setBulkTargetAgents] = useState<string[]>([]);
@@ -364,6 +506,9 @@ export default function LeadPipeline({
 
   // Bulk Status Transfer Helper Calculations
   const bulkMatchingLeads = useMemo(() => {
+    if (bulkTransferUseSelected) {
+      return leads.filter(lead => selectedLeadIds.includes(lead.id));
+    }
     return leads.filter(lead => {
       const matchStatus = lead.status === bulkSourceStatus;
       if (!matchStatus) return false;
@@ -373,7 +518,7 @@ export default function LeadPipeline({
       }
       return (lead.assignedAgent || "").trim().toLowerCase() === bulkSourceAgent.trim().toLowerCase();
     });
-  }, [leads, bulkSourceStatus, bulkSourceAgent]);
+  }, [leads, bulkSourceStatus, bulkSourceAgent, bulkTransferUseSelected, selectedLeadIds]);
 
   const bulkCurrentAssigneesForSelectedStatus = useMemo(() => {
     const list = leads
@@ -416,9 +561,15 @@ export default function LeadPipeline({
             : `${bulkTargetAgents.length} selected advisors sequentially (Round-Robin equal balanced distribution)`;
           setBulkTransferMessage({ 
             type: "success", 
-            text: `Successfully reallocated ${res.count} CRM record${res.count !== 1 ? "s" : ""} of status "${bulkSourceStatus}" across ${namesStr}!` 
+            text: bulkTransferUseSelected
+              ? `Successfully reallocated ${res.count} hand-selected CRM record${res.count !== 1 ? "s" : ""} across ${namesStr}!`
+              : `Successfully reallocated ${res.count} CRM record${res.count !== 1 ? "s" : ""} of status "${bulkSourceStatus}" across ${namesStr}!` 
           });
           setBulkTargetAgents([]);
+          if (bulkTransferUseSelected) {
+            setSelectedLeadIds([]);
+            setBulkTransferUseSelected(false);
+          }
         } else {
           setBulkTransferMessage({ type: "error", text: res.error || "An error occurred during bulk transfer." });
         }
@@ -716,7 +867,7 @@ export default function LeadPipeline({
     budget: "",
     notes: "",
     location: "" as any,
-    assignedAgent: currentUser?.role === "sales_team" ? currentUser.name : "Rajan Srivastava",
+    assignedAgent: currentUser?.role === "sales_team" ? currentUser.name : "Pending Assignment",
     score: 75,
     projectName: ""
   }));
@@ -733,17 +884,25 @@ export default function LeadPipeline({
   ];
 
   const finalAgents = useMemo(() => {
-    if (!users || users.length === 0) return presetAgents;
-    
-    // Only list active users for new lead assignments
-    const activeUsers = users.filter(u => u.active !== false);
-    
-    if (currentUser?.role === "team_leader") {
-      return activeUsers
-        .filter(u => u.id === currentUser.id || u.teamLeaderId === currentUser.id)
-        .map(u => u.name);
+    let list: string[] = [];
+    if (!users || users.length === 0) {
+      list = [...presetAgents];
+    } else {
+      // Only list active users for new lead assignments
+      const activeUsers = users.filter(u => u.active !== false);
+      
+      if (currentUser?.role === "team_leader") {
+        list = activeUsers
+          .filter(u => u.id === currentUser.id || u.teamLeaderId === currentUser.id)
+          .map(u => u.name);
+      } else {
+        list = activeUsers.map((u) => u.name);
+      }
     }
-    return activeUsers.map((u) => u.name);
+    if (!list.includes("Pending Assignment")) {
+      list = ["Pending Assignment", ...list];
+    }
+    return list;
   }, [users, currentUser]);
 
   const [showNewAgentDropdown, setShowNewAgentDropdown] = useState(false);
@@ -932,7 +1091,7 @@ export default function LeadPipeline({
       budget: "",
       notes: "",
       location: "" as any,
-      assignedAgent: currentUser?.role === "sales_team" ? currentUser.name : "Rajan Srivastava",
+      assignedAgent: currentUser?.role === "sales_team" ? currentUser.name : "Pending Assignment",
       score: 75,
       projectName: ""
     });
@@ -1014,14 +1173,7 @@ export default function LeadPipeline({
       sender: "Rajan Srivastava"
     });
     
-    // Update Lead status to 'Follow Up' if it was 'Interested'
-    if (selectedLeadForAI.status === "Interested") {
-      onUpdateLead({
-        ...selectedLeadForAI,
-        status: "Follow Up",
-        dateUpdated: new Date().toISOString().split("T")[0]
-      });
-    }
+    // Automatic lead status progression is stopped per user request to maintain manual tracking purity
 
     setEmailSuccessMsg("Pristine email generated successfully & logged to Communication Timeline!");
     setTimeout(() => {
@@ -1223,6 +1375,7 @@ export default function LeadPipeline({
                       setBulkSearchQuery("");
                       setBulkSourceStatus("New Lead");
                       setBulkSourceAgent("All");
+                      setBulkTransferUseSelected(false);
                       setIsBulkTransferModalOpen(true);
                     }}
                     className="px-4.5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-550 text-white font-semibold text-xs tracking-wide uppercase transition-all shadow-md shadow-indigo-600/15 flex items-center gap-2 cursor-pointer active:scale-95"
@@ -1718,11 +1871,20 @@ export default function LeadPipeline({
                 <button
                   type="button"
                   id="clear-edit-logs-history-btn"
-                  onClick={() => {
-                    if (window.confirm("Are you sure you want to clear your Sales Advisor Revision history logs?")) {
-                      onClearLeadEditLogs("edit");
-                    }
-                  }}
+                onClick={() => {
+                  const handleClear = () => {
+                    onClearLeadEditLogs("edit");
+                  };
+                  if (triggerConfirm) {
+                    triggerConfirm(
+                      "Clear History Logs",
+                      "Are you sure you want to clear your Sales Advisor Revision history logs?",
+                      handleClear
+                    );
+                  } else if (window.confirm("Are you sure you want to clear your Sales Advisor Revision history logs?")) {
+                    handleClear();
+                  }
+                }}
                   className="px-3 py-1 text-[11px] font-sans font-bold uppercase tracking-wider rounded-lg border border-rose-500/25 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 cursor-pointer transition active:scale-95"
                 >
                   Clear History Logs
@@ -1807,11 +1969,16 @@ export default function LeadPipeline({
         >
           <div className="flex justify-between items-center pb-4 border-b border-slate-100/10">
             <div>
-              <h3 className={`font-display font-semibold text-base ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
-                Lead Inactivity Auto-Transfer History Ledger
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5 font-sans">
-                Real-time auditing trail of automatic reassignments (Note: Auto-transfer rules have been permanently removed from the system)
+              <div className="flex items-center gap-2 mb-1">
+                <h3 className={`font-display font-semibold text-base ${darkMode ? "text-slate-100" : "text-slate-900"}`}>
+                  Lead Inactivity Auto-Transfer History Ledger
+                </h3>
+                <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-rose-500/15 text-rose-450 border border-rose-500/20">
+                  ● STOPPED & NOT ACTIVE
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 font-sans">
+                Real-time auditing trail of historical automatic reassignments. Note: Automatic reassignments and automatic stage changes for New Leads are now permanently **disabled & stopped** to maintain perfect manual progression tracking.
               </p>
             </div>
             <div className="flex items-center gap-3">
@@ -1820,8 +1987,17 @@ export default function LeadPipeline({
                   type="button"
                   id="clear-auto-transfer-logs-btn"
                   onClick={() => {
-                    if (window.confirm("Are you sure you want to clear your Lead Auto-Transfer logs?")) {
+                    const handleClear = () => {
                       onClearLeadEditLogs("transfer");
+                    };
+                    if (triggerConfirm) {
+                      triggerConfirm(
+                        "Clear Auto-Transfer Logs",
+                        "Are you sure you want to clear your Lead Auto-Transfer logs?",
+                        handleClear
+                      );
+                    } else if (window.confirm("Are you sure you want to clear your Lead Auto-Transfer logs?")) {
+                      handleClear();
                     }
                   }}
                   className="px-3 py-1 text-[11px] font-sans font-bold uppercase tracking-wider rounded-lg border border-rose-500/25 bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 cursor-pointer transition active:scale-95"
@@ -1984,6 +2160,21 @@ export default function LeadPipeline({
                 <div className="flex items-center gap-3 w-full md:w-auto justify-end">
                   <button
                     type="button"
+                    id="bulk-transfer-selected-btn"
+                    onClick={() => {
+                      setBulkTransferMessage(null);
+                      setBulkTargetAgents([]);
+                      setBulkSearchQuery("");
+                      setBulkTransferUseSelected(true);
+                      setIsBulkTransferModalOpen(true);
+                    }}
+                    className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 cursor-pointer transition flex items-center gap-1.5 active:scale-95"
+                  >
+                    <ArrowLeftRight size={13} className="text-indigo-500" />
+                    Bulk Transfer Selected ({selectedLeadIds.length})
+                  </button>
+                  <button
+                    type="button"
                     id="bulk-delete-leads-btn"
                     onClick={() => {
                       if (onBulkDeleteLeads) {
@@ -2090,18 +2281,7 @@ export default function LeadPipeline({
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono tracking-wider uppercase font-semibold ${getStatusBadgeClass(lead.status)}`}>
                       {lead.status || "(Select Status)"}
                     </span>
-                    {lead.status === "New Lead" && (lead.lastActionTimestamp || lead.assignmentTimestamp) && isAgentEligibleForTransfer(lead.assignedAgent) && (
-                      <span className="text-[9px] font-mono text-slate-400 font-semibold px-2 py-0.5 bg-slate-500/10 border border-slate-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                        <Clock size={10} className="text-slate-400" />
-                        Transfer: Stopped
-                      </span>
-                    )}
-                    {(lead.status === "Not Pick" || lead.status === "Switched Off") && isAgentEligibleForTransfer(lead.assignedAgent) && (
-                      <span className="text-[9px] font-mono text-slate-400 font-semibold px-2 py-0.5 bg-slate-500/10 border border-slate-500/20 rounded-md inline-flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                        <Clock size={10} className="text-slate-400" />
-                        Transfer: Stopped
-                      </span>
-                    )}
+
                     <div className="text-[10px] font-mono font-medium">
                       Priority Index: <span className={getScoreColor(lead.score || 50)}>{lead.score || 50}</span>
                     </div>
@@ -2184,7 +2364,7 @@ export default function LeadPipeline({
                 </div>
 
                 {/* Interaction & AI Assistant triggers */}
-                <div className="flex items-center justify-between gap-2.5 mt-1 pt-1.5">
+                <div className="flex flex-col sm:flex-row gap-2 mt-1.5 pt-1.5">
                   <button 
                     id={`trigger-ai-email-${lead.id}`}
                     onClick={() => generateAIFollowUp(lead)}
@@ -2194,11 +2374,34 @@ export default function LeadPipeline({
                     Draft AI Advisory Email
                   </button>
 
-                  <div className="flex gap-1.5">
+                  <div className="flex flex-1 sm:flex-initial gap-1.5 justify-end">
+                    {(() => {
+                      const activeReminders = appointments.filter(app => app.leadId === lead.id && !app.isCompleted);
+                      const hasReminders = activeReminders.length > 0;
+                      return (
+                        <button
+                          id={`reminder-lead-${lead.id}`}
+                          onClick={() => openReminderModal(lead)}
+                          className={`px-3 py-2 rounded-xl text-xs font-semibold transition duration-155 cursor-pointer border relative flex items-center justify-center gap-1.5 shadow-sm active:scale-95
+                            ${hasReminders
+                              ? (darkMode 
+                                ? "bg-indigo-950/40 border-indigo-500 hover:bg-indigo-900/60 text-indigo-300" 
+                                : "bg-indigo-50 border-indigo-300 hover:bg-indigo-100/80 text-indigo-700")
+                              : (darkMode 
+                                ? "bg-slate-800 hover:bg-indigo-950/45 border-slate-700 hover:border-indigo-550 text-indigo-400" 
+                                : "bg-slate-50 hover:bg-indigo-50 border-slate-200 hover:border-indigo-500 text-indigo-600")}`}
+                          title={hasReminders ? `${activeReminders.length} Active Reminder(s) - Click to manage or update` : "Create/Set Reminder"}
+                        >
+                          <Bell size={12} className={hasReminders ? "animate-pulse" : ""} />
+                          <span>{hasReminders ? `${activeReminders.length} Reminder(s)` : "Create Reminder"}</span>
+                        </button>
+                      );
+                    })()}
+
                     <button
                       id={`edit-lead-${lead.id}`}
                       onClick={() => setEditingLead(currentUser?.role === "super_admin" || currentUser?.role === "admin" ? lead : { ...lead, notes: getDisplayNotes(lead.notes) })}
-                      className={`p-2 rounded-xl transition duration-155 cursor-pointer border
+                      className={`p-2 rounded-xl transition duration-155 cursor-pointer border flex items-center justify-center
                         ${darkMode 
                           ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200" 
                           : "bg-slate-50 hover:bg-slate-150 border-slate-200 text-slate-700"}`}
@@ -2211,7 +2414,7 @@ export default function LeadPipeline({
                       <button
                         id={`delete-lead-${lead.id}`}
                         onClick={() => onDeleteLead(lead.id)}
-                        className={`p-2 rounded-xl transition duration-155 cursor-pointer border hover:border-rose-500/30 hover:text-rose-500
+                        className={`p-2 rounded-xl transition duration-155 cursor-pointer border hover:border-rose-500/30 hover:text-rose-500 flex items-center justify-center
                           ${darkMode 
                             ? "bg-slate-800 border-slate-705 text-slate-400" 
                             : "bg-slate-50 border-slate-200 text-slate-500"}`}
@@ -3152,6 +3355,266 @@ export default function LeadPipeline({
         </div>
       )}
 
+      {/* MODAL: Set Reminder / Quick Appointment Operator */}
+      {reminderModalLead && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 transition-all overflow-y-auto">
+          <div 
+            id="quick-reminder-modal"
+            className={`w-full max-w-md rounded-2xl border p-6 shadow-2xl relative my-8 animate-in fade-in zoom-in duration-200
+              ${darkMode ? "bg-slate-900 border-slate-800 text-slate-100" : "bg-white border-slate-200 text-slate-800"}`}
+          >
+            <button 
+              onClick={() => setReminderModalLead(null)}
+              className="absolute top-4 right-4 text-slate-400 dark:hover:text-slate-200 hover:text-slate-800 transition-colors cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+
+            <h3 className="text-sm font-bold tracking-wide uppercase flex items-center gap-2 mb-2">
+              <Bell size={16} className="text-indigo-500 animate-bounce" />
+              Set Reminder / Agenda
+            </h3>
+            <p className="text-[10px] text-slate-400 mb-4 font-mono uppercase tracking-wider">
+              Create an agenda entry or phone appointment reminder connected to this prospect.
+            </p>
+
+            {reminderAlert && (
+              <div 
+                className={`p-3.5 rounded-xl mb-4 text-xs font-semibold flex items-start gap-2 border leading-relaxed
+                  ${reminderAlert.type === "success" 
+                    ? "bg-emerald-500/15 border-emerald-500/30 text-emerald-400" 
+                    : "bg-rose-500/15 border-rose-500/30 text-rose-400"}`}
+              >
+                <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+                <span>{reminderAlert.message}</span>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5">
+                  Associated Lead
+                </label>
+                <div className={`p-2.5 rounded-xl border text-xs font-semibold
+                  ${darkMode ? "bg-slate-950/80 border-slate-850 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-700"}`}
+                >
+                  {reminderModalLead.name} {reminderModalLead.company ? `• ${reminderModalLead.company}` : ""}
+                </div>
+              </div>
+
+              {(() => {
+                const leadReminders = appointments.filter(app => app.leadId === reminderModalLead.id && !app.isCompleted);
+                if (leadReminders.length === 0) return null;
+                return (
+                  <div>
+                    <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5 flex justify-between items-center">
+                      <span>Active Reminders ({leadReminders.length})</span>
+                      <div className="flex items-center gap-1.5">
+                        {onDeleteAppointment && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const handleRemoveAll = () => {
+                                const ids = leadReminders.map(rem => rem.id);
+                                onDeleteAppointment(ids, true);
+                                startNewReminderForm();
+                              };
+                              if (triggerConfirm) {
+                                triggerConfirm(
+                                  "Remove All Reminders",
+                                  `⚠️ Are you sure you want to delete ALL (${leadReminders.length}) reminders set for this lead?`,
+                                  handleRemoveAll
+                                );
+                              } else if (window.confirm(`⚠️ Are you sure you want to delete ALL (${leadReminders.length}) reminders set for this lead?`)) {
+                                handleRemoveAll();
+                              }
+                            }}
+                            className="text-[9px] font-sans text-rose-400 hover:text-rose-350 hover:bg-rose-500/10 font-bold cursor-pointer flex items-center gap-1 px-2 py-0.5 rounded-md border border-rose-500/20"
+                          >
+                            <Trash2 size={9} />
+                            Remove All
+                          </button>
+                        )}
+                        {editingReminderId && (
+                          <button
+                            type="button"
+                            onClick={startNewReminderForm}
+                            className="text-[9px] font-sans text-indigo-400 hover:text-indigo-300 font-semibold cursor-pointer flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded-md"
+                          >
+                            + Create New
+                          </button>
+                        )}
+                      </div>
+                    </label>
+                    <div className="space-y-1.5 max-h-[110px] overflow-y-auto pr-1">
+                      {leadReminders.map(rem => {
+                        const isCurrentlyEditing = rem.id === editingReminderId;
+                        return (
+                          <div
+                            key={rem.id}
+                            onClick={() => {
+                              setEditingReminderId(rem.id);
+                              setReminderTitle(rem.title);
+                              setReminderType(rem.type);
+                              setReminderDate(rem.date);
+                              setReminderTime(rem.time);
+                              setReminderNotes(rem.notes || "");
+                              setReminderAlert(null);
+                            }}
+                            className={`p-2 rounded-xl border text-[11px] flex items-center justify-between cursor-pointer transition-all duration-150
+                              ${isCurrentlyEditing
+                                ? (darkMode 
+                                  ? "bg-indigo-950/45 border-indigo-500 text-indigo-300"
+                                  : "bg-indigo-50 border-indigo-400 text-indigo-700")
+                                : (darkMode
+                                  ? "bg-slate-950 hover:bg-slate-850 border-slate-850 text-slate-400"
+                                  : "bg-white hover:bg-slate-50 border-slate-200 text-slate-600")}`}
+                          >
+                            <div className="flex items-center gap-1.5 truncate">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 flex-shrink-0" />
+                              <span className="font-semibold truncate">{rem.title}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-mono whitespace-nowrap bg-slate-500/10 px-1.5 py-0.5 rounded">
+                                {rem.date} {rem.time}
+                              </span>
+                              {onDeleteAppointment && (
+                                <button
+                                  type="button"
+                                  title="Delete reminder"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const handleDelete = () => {
+                                      onDeleteAppointment(rem.id, true);
+                                      if (editingReminderId === rem.id) {
+                                        startNewReminderForm();
+                                      }
+                                    };
+                                    if (triggerConfirm) {
+                                      triggerConfirm(
+                                        "Delete Reminder",
+                                        `Are you sure you want to delete reminder "${rem.title}"?`,
+                                        handleDelete
+                                      );
+                                    } else if (window.confirm(`Delete reminder "${rem.title}"?`)) {
+                                      handleDelete();
+                                    }
+                                  }}
+                                  className="p-1 rounded text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 cursor-pointer transition"
+                                >
+                                  <Trash2 size={11} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div>
+                <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5 flex justify-between items-center">
+                  <span>Reminder Title / Task Name *</span>
+                  {editingReminderId && (
+                    <span className="text-[9.5px] uppercase font-mono px-2 py-0.5 rounded bg-indigo-500/10 text-indigo-400 font-bold">
+                      Editing Mode
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  value={reminderTitle}
+                  onChange={(e) => setReminderTitle(e.target.value)}
+                  placeholder="e.g. Call Client about Noida Property"
+                  className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                    ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5">
+                    Target Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={reminderDate}
+                    onChange={(e) => setReminderDate(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 [color-scheme:dark]
+                      ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5">
+                    Target Time *
+                  </label>
+                  <input
+                    type="time"
+                    value={reminderTime}
+                    onChange={(e) => setReminderTime(e.target.value)}
+                    className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 [color-scheme:dark]
+                      ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5">
+                  Task Category
+                </label>
+                <select
+                  value={reminderType}
+                  onChange={(e) => setReminderType(e.target.value as AppointmentType)}
+                  className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                    ${darkMode ? "bg-slate-950 border-slate-855 text-slate-200" : "bg-slate-50 border-slate-220 text-slate-800"}`}
+                >
+                  <option value="followup">Follow-Up Task</option>
+                  <option value="call">Phone Call Alignment</option>
+                  <option value="meeting">Personal Meeting</option>
+                  <option value="site_visit">Property Site Visit</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase font-mono text-slate-400 font-bold mb-1.5">
+                  Reminder Synopsis (Notes)
+                </label>
+                <textarea
+                  value={reminderNotes}
+                  onChange={(e) => setReminderNotes(e.target.value)}
+                  placeholder="e.g. Schedule call to describe layout map"
+                  rows={3}
+                  className={`w-full p-2.5 rounded-xl text-xs border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 resize-none
+                    ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => setReminderModalLead(null)}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer transition
+                    ${darkMode ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-white" : "bg-slate-100 hover:bg-slate-150 border-slate-205 text-slate-805"}`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateOrUpdateReminder}
+                  className="px-5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer transition shadow-md shadow-indigo-600/15 active:scale-95"
+                >
+                  {editingReminderId ? "Update Reminder" : "Set Reminder"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* MODAL: Bulk Lead Reassignment Operator */}
       {isBulkTransferModalOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 transition-all overflow-y-auto">
@@ -3166,6 +3629,7 @@ export default function LeadPipeline({
                 setBulkTransferMessage(null);
                 setBulkTargetAgents([]);
                 setBulkSearchQuery("");
+                setBulkTransferUseSelected(false);
               }}
               className="absolute top-4 right-4 text-slate-400 dark:hover:text-slate-200 hover:text-slate-800 transition-colors"
             >
@@ -3181,64 +3645,111 @@ export default function LeadPipeline({
               Batch transfer investor portfolios instantly from target statuses or specific advisors and distribute them equally across selected online Sales Consultants.
             </p>
 
-            <div className="space-y-4">
-              {/* SELECT SOURCE LEAD STATUS */}
-              <div>
-                <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
-                  1. Filter by Lead Status
-                </label>
-                <select
-                  value={bulkSourceStatus}
-                  onChange={(e) => {
-                    setBulkSourceStatus(e.target.value);
-                    setBulkSourceAgent("All");
+            {/* Mode Selector Toggle if selectedLeadIds exist */}
+            {selectedLeadIds.length > 0 && (
+              <div className={`p-1 rounded-xl mb-4 flex gap-1 border ${darkMode ? "bg-slate-950/80 border-slate-800" : "bg-slate-100 border-slate-200"}`}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkTransferUseSelected(false);
                     setBulkTransferMessage(null);
                   }}
-                  className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
-                    ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                  className={`flex-1 py-1.5 px-3 text-[11.5px] font-semibold rounded-lg transition-all ${
+                    !bulkTransferUseSelected
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-slate-400 hover:text-slate-250 dark:hover:text-white"
+                  }`}
                 >
-                  <option value="New Lead">New Lead</option>
-                  <option value="Interested">Interested</option>
-                  <option value="Follow Up">Follow Up</option>
-                  <option value="Detailed Share">Detailed Share</option>
-                  <option value="Meeting Done">Meeting Done</option>
-                  <option value="Site Visit">Site Visit</option>
-                  <option value="Call Back">Call Back</option>
-                  <option value="Closed Client">Closed Client</option>
-                  <option value="Not Pick">Not Pick</option>
-                  <option value="Switched Off">Switched Off</option>
-                  <option value="Not Interested">Not Interested</option>
-                  <option value="Low Budget">Low Budget</option>
-                  <option value="Junk">Junk</option>
-                  <option value="Duplicate">Duplicate</option>
-                </select>
+                  Status Filter Mode
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkTransferUseSelected(true);
+                    setBulkTransferMessage(null);
+                  }}
+                  className={`flex-1 py-1.5 px-3 text-[11.5px] font-semibold rounded-lg transition-all ${
+                    bulkTransferUseSelected
+                      ? "bg-indigo-600 text-white shadow"
+                      : "text-slate-400 hover:text-slate-250 dark:hover:text-white"
+                  }`}
+                >
+                  Selected Leads ({selectedLeadIds.length})
+                </button>
               </div>
+            )}
 
-              {/* FILTER BY CURRENT ASSIGNEE */}
-              <div>
-                <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
-                  2. From Current Occupant / Owner
-                </label>
-                <select
-                  value={bulkSourceAgent}
-                  onChange={(e) => {
-                    setBulkSourceAgent(e.target.value);
-                    setBulkTransferMessage(null);
-                  }}
-                  className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
-                    ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+            <div className="space-y-4">
+              {!bulkTransferUseSelected ? (
+                <>
+                  {/* SELECT SOURCE LEAD STATUS */}
+                  <div>
+                    <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
+                      1. Filter by Lead Status
+                    </label>
+                    <select
+                      value={bulkSourceStatus}
+                      onChange={(e) => {
+                        setBulkSourceStatus(e.target.value);
+                        setBulkSourceAgent("All");
+                        setBulkTransferMessage(null);
+                      }}
+                      className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                        ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                    >
+                      <option value="New Lead">New Lead</option>
+                      <option value="Interested">Interested</option>
+                      <option value="Follow Up">Follow Up</option>
+                      <option value="Detailed Share">Detailed Share</option>
+                      <option value="Meeting Done">Meeting Done</option>
+                      <option value="Site Visit">Site Visit</option>
+                      <option value="Call Back">Call Back</option>
+                      <option value="Closed Client">Closed Client</option>
+                      <option value="Not Pick">Not Pick</option>
+                      <option value="Switched Off">Switched Off</option>
+                      <option value="Not Interested">Not Interested</option>
+                      <option value="Low Budget">Low Budget</option>
+                      <option value="Junk">Junk</option>
+                      <option value="Duplicate">Duplicate</option>
+                    </select>
+                  </div>
+
+                  {/* FILTER BY CURRENT ASSIGNEE */}
+                  <div>
+                    <label className="block text-[10px] font-mono tracking-wider uppercase text-slate-400 mb-1.5 font-semibold">
+                      2. From Current Occupant / Owner
+                    </label>
+                    <select
+                      value={bulkSourceAgent}
+                      onChange={(e) => {
+                        setBulkSourceAgent(e.target.value);
+                        setBulkTransferMessage(null);
+                      }}
+                      className={`w-full p-2.5 rounded-xl text-xs font-medium border focus:outline-none focus:ring-1 focus:ring-indigo-500/50 
+                        ${darkMode ? "bg-slate-950 border-slate-850 text-slate-200" : "bg-slate-50 border-slate-200 text-slate-800"}`}
+                    >
+                      <option value="All">All Owners (Reallocate complete status bucket)</option>
+                      <option value="Unassigned">Unassigned (Only direct unowned leads)</option>
+                      {bulkCurrentAssigneesForSelectedStatus
+                        .filter(name => name.trim().toLowerCase() !== "unassigned")
+                        .map((name) => (
+                          <option key={name} value={name}>
+                            {name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </>
+              ) : (
+                <div className={`p-4 rounded-xl border border-dashed text-center flex flex-col items-center justify-center py-6
+                  ${darkMode ? "bg-slate-950/40 border-slate-800 text-slate-300" : "bg-slate-50 border-slate-200 text-slate-600"}`}
                 >
-                  <option value="All">All Owners (Reallocate complete status bucket)</option>
-                  <option value="Unassigned">Unassigned (Only direct unowned leads)</option>
-                  {bulkCurrentAssigneesForSelectedStatus
-                    .filter(name => name.trim().toLowerCase() !== "unassigned")
-                    .map((name) => (
-                      <option key={name} value={name}>
-                        {name}
-                      </option>
-                    ))}
-                </select>
-              </div>
+                  <p className="text-xs font-semibold mb-1">Hand-Selected Leads Mode Active</p>
+                  <p className="text-[10px] text-slate-400 max-w-xs">
+                    You are reallocating specifically the {selectedLeadIds.length} lead{selectedLeadIds.length !== 1 ? "s" : ""} currently checked on the CRM screen.
+                  </p>
+                </div>
+              )}
 
               {/* DYNAMIC MATCH COUNT INDICATOR */}
               <div className={`p-3.5 rounded-xl border flex items-center justify-between text-xs
@@ -3446,6 +3957,7 @@ export default function LeadPipeline({
                   setBulkTransferMessage(null);
                   setBulkTargetAgents([]);
                   setBulkSearchQuery("");
+                  setBulkTransferUseSelected(false);
                 }}
                 className={`px-4 py-2 rounded-xl text-xs font-semibold border cursor-pointer transition
                   ${darkMode ? "bg-slate-800 hover:bg-slate-700 border-slate-700 text-white" : "bg-slate-100 hover:bg-slate-150 border-slate-205 text-slate-855"}
