@@ -966,7 +966,9 @@ export default function App() {
     setLeads(prev => [item, ...prev]);
 
     // Create a notification for the assignee about this new lead assignment
-    if (item.assignedAgent) {
+    // Skip if the lead is registered by Sales Team or Team Leaders (per user directive)
+    const isRegisteredBySalesOrTL = currentUser?.role === "sales_team" || currentUser?.role === "team_leader";
+    if (item.assignedAgent && !isRegisteredBySalesOrTL) {
       const newNotif: AppNotification = {
         id: "notif-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
         recipientName: item.assignedAgent,
@@ -1094,26 +1096,30 @@ export default function App() {
     setLeads(prev => [...newItems, ...prev]);
 
     // Create notifications for assigned agents
+    // Skip if the lead is registered by Sales Team or Team Leaders (per user directive)
     const rawBulkNotifs: AppNotification[] = [];
-    newItems.forEach(item => {
-      if (item.assignedAgent) {
-        rawBulkNotifs.push({
-          id: "notif-" + Math.random().toString(36).substr(2, 5) + "-" + Date.now(),
-          recipientName: item.assignedAgent,
-          title: "New Lead Assigned",
-          message: `Lead "${item.name}" from ${item.source} has been imported & assigned to you.`,
-          source: item.source,
-          timestamp: new Date().toLocaleString("en-US", { 
-            timeStyle: "short", 
-            dateStyle: "medium"
-          }),
-          isRead: false,
-          type: "assignment",
-          leadId: item.id,
-          leadName: item.name
-        });
-      }
-    });
+    const isBulkRegisteredBySalesOrTL = currentUser?.role === "sales_team" || currentUser?.role === "team_leader";
+    if (!isBulkRegisteredBySalesOrTL) {
+      newItems.forEach(item => {
+        if (item.assignedAgent) {
+          rawBulkNotifs.push({
+            id: "notif-" + Math.random().toString(36).substr(2, 5) + "-" + Date.now(),
+            recipientName: item.assignedAgent,
+            title: "New Lead Assigned",
+            message: `Lead "${item.name}" from ${item.source} has been imported & assigned to you.`,
+            source: item.source,
+            timestamp: new Date().toLocaleString("en-US", { 
+              timeStyle: "short", 
+              dateStyle: "medium"
+            }),
+            isRead: false,
+            type: "assignment",
+            leadId: item.id,
+            leadName: item.name
+          });
+        }
+      });
+    }
 
     if (rawBulkNotifs.length > 0) {
       setNotifications(prev => [...rawBulkNotifs, ...prev]);
