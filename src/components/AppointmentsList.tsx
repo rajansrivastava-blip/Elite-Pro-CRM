@@ -228,17 +228,18 @@ export default function AppointmentsList({
     }
   };
 
-  // Get current date string in UTC / local standard to detect today relative to mock time (2026-05-25)
-  const SYSTEM_CURRENT_DATE = "2026-05-25"; 
+  // Get current date string in UTC / local standard to detect today
+  const SYSTEM_CURRENT_DATE = new Date().toISOString().split("T")[0]; 
 
   // Snooze function to add 1 day to the date (YYYY-MM-DD format)
   const snoozeAppointmentOneDay = (app: Appointment) => {
     try {
       const currentDate = new Date(app.date);
       if (isNaN(currentDate.getTime())) {
+        const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split("T")[0];
         onUpdateAppointment({
           ...app,
-          date: "2026-05-26"
+          date: tomorrowStr
         });
         return;
       }
@@ -419,7 +420,7 @@ export default function AppointmentsList({
             </h3>
             <p className="text-xs text-slate-400 mt-1">
               {todayCount > 0 
-                ? `You have ${todayCount} prospective client alignment appointment(s) scheduled for today, May 25, 2026. Prioritize client routing immediately.` 
+                ? `You have ${todayCount} prospective client alignment appointment(s) scheduled for today, ${new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}. Prioritize client routing immediately.` 
                 : "Perfect! All corporate followups are active and cataloged within standard boundaries."}
             </p>
           </div>

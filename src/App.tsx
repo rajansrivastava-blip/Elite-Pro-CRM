@@ -2388,7 +2388,7 @@ export default function App() {
     );
   }
 
-  const todayRemindersCount = appointments.filter(a => a.date === "2026-05-25" && !a.isCompleted).length;
+  const todayRemindersCount = appointments.filter(a => a.date === new Date().toISOString().split("T")[0] && !a.isCompleted).length;
 
   return (
     <div 
@@ -2603,7 +2603,7 @@ export default function App() {
           <span>Elite Pro Corporate Real Estate Advisors CRM Console © 2026</span>
           <div className="flex gap-4 items-center">
             <span>Secure Enterprise Connection: Active TLSv1.3</span>
-            <span>Local Node Current Time: 2026-05-25 08:10 GMT</span>
+            <span>Local Node Current Time: {new Date().toISOString().replace('T', ' ').substring(0, 16).replace(/-/g, '/')} UTC</span>
           </div>
         </footer>
       </main>
