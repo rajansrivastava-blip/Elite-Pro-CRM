@@ -377,11 +377,19 @@ export function isDuplicateLead(
 ): boolean {
   const getDigits = (p?: string) => {
     if (!p) return "";
-    const digits = p.replace(/\D/g, "");
+    let digits = p.replace(/\D/g, "");
     if (digits.length === 12 && digits.startsWith("91")) {
       return digits.substring(2);
     }
     if (digits.length === 11 && digits.startsWith("0")) {
+      return digits.substring(1);
+    }
+    // Clean any prefix 91 if the remaining part is 10 digits
+    if (digits.length > 10 && digits.startsWith("91")) {
+      return digits.substring(2);
+    }
+    // Clean prefix 0 if remaining part is 10 digits
+    if (digits.length > 10 && digits.startsWith("0")) {
       return digits.substring(1);
     }
     return digits;
@@ -430,6 +438,12 @@ export function isDuplicateLead(
     // 1. If valid phone numbers match, they are duplicates
     if (nlPhone && lPhone && nlPhone.length >= 7 && lPhone.length >= 7) {
       if (nlPhone === lPhone || nlPhone.endsWith(lPhone) || lPhone.endsWith(nlPhone)) {
+        return true;
+      }
+      // Fail-safe comparison of the last 10 digits (highly robust for Indian mobile configurations)
+      const nlLast10 = nlPhone.length >= 10 ? nlPhone.substring(nlPhone.length - 10) : "";
+      const lLast10 = lPhone.length >= 10 ? lPhone.substring(lPhone.length - 10) : "";
+      if (nlLast10 && lLast10 && nlLast10 === lLast10) {
         return true;
       }
     }
