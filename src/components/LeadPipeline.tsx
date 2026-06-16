@@ -2266,6 +2266,19 @@ export default function LeadPipeline({
                         <span>{lead.position || "Private Client"}</span>
                         <span className="text-slate-500 font-light">|</span>
                         <span className="text-teal-400 font-mono text-[10px]">Assignee: {lead.assignedAgent}</span>
+                        {lead.assignmentTimestamp && (
+                          <span className="text-[10px] font-mono bg-teal-500/10 px-1.5 py-0.5 rounded text-teal-300 border border-teal-500/20 flex items-center gap-1">
+                            <Clock size={10} className="text-teal-450" />
+                            Assigned: {new Date(lead.assignmentTimestamp).toLocaleString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: true
+                            })}
+                          </span>
+                        )}
                         {(() => {
                           const waHref = getAgentWhatsAppHref(lead.assignedAgent, lead);
                           if (!waHref) return null;
@@ -2338,6 +2351,37 @@ export default function LeadPipeline({
                       </span>
                     </div>
                   </div>
+
+                  {lead.assignmentTimestamp && (
+                    <div className="flex items-center gap-2 col-span-2 sm:col-span-1 border-t border-slate-100/5 pt-2 sm:border-t-0 sm:pt-0">
+                      <Clock size={14} className="text-teal-400" />
+                      <div>
+                        <p className="text-[10px] text-slate-400 leading-none">ASSIGNED TIME</p>
+                        <p className="text-xs font-bold text-teal-300 mt-1 font-mono">
+                          {new Date(lead.assignmentTimestamp).toLocaleString("en-US", {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: true
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {lead.dateCreated && (
+                    <div className="flex items-center gap-2 col-span-2 sm:col-span-1 border-t border-slate-100/5 pt-2 sm:border-t-0 sm:pt-0">
+                      <Calendar size={14} className="text-slate-400" />
+                      <div>
+                        <p className="text-[10px] text-slate-400 leading-none">CREATED ON</p>
+                        <p className="text-xs font-bold text-slate-350 mt-1 font-mono">
+                          {lead.dateCreated}
+                        </p>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Notes Block */}
@@ -3145,6 +3189,19 @@ export default function LeadPipeline({
                 {!isAuthorizedToAssign && (
                   <p className="text-[10px] text-slate-400 mt-1">
                     Only administrators and team leaders can assign or change lead ownership.
+                  </p>
+                )}
+                {editingLead.assignmentTimestamp && (
+                  <p className="text-[10px] text-teal-400 mt-1.5 flex items-center gap-1 font-mono">
+                    <Clock size={11} className="text-teal-400" />
+                    Assigned On: {new Date(editingLead.assignmentTimestamp).toLocaleString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      hour12: true
+                    })}
                   </p>
                 )}
               </div>
