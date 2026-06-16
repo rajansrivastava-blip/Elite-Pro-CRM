@@ -1036,7 +1036,7 @@ export default function App() {
   };
 
   // Handler: Bulk Add Leads (CSV/Excel ingestion)
-  const handleBulkAddLeads = async (newLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[]) => {
+  const handleBulkAddLeads = async (newLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[], skipDupCheck: boolean = false) => {
     // Role-based Access Control authorization filter
     if (
       currentUser?.role !== "super_admin" &&
@@ -1059,13 +1059,20 @@ export default function App() {
 
     // Secondary deep verification filters for absolute duplicate safety using up-to-date ref state
     const uniqueNewLeads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[] = [];
-    newLeads.forEach(nl => {
-      const isDupInCrm = isDuplicateLead(nl, leadsRef.current || []);
-      const isDupInBatch = isDuplicateLead(nl, uniqueNewLeads);
-      if (!isDupInCrm && !isDupInBatch) {
+    if (skipDupCheck) {
+      // Direct pass - do absolutely NO duplicate filters
+      newLeads.forEach(nl => {
         uniqueNewLeads.push(nl);
-      }
-    });
+      });
+    } else {
+      newLeads.forEach(nl => {
+        const isDupInCrm = isDuplicateLead(nl, leadsRef.current || []);
+        const isDupInBatch = isDuplicateLead(nl, uniqueNewLeads);
+        if (!isDupInCrm && !isDupInBatch) {
+          uniqueNewLeads.push(nl);
+        }
+      });
+    }
 
     if (uniqueNewLeads.length === 0) {
       console.log("[Bulk Add Leads] All imported leads matched existing contacts; bypassing registration.");

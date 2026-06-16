@@ -45,7 +45,7 @@ interface LeadPipelineProps {
   leads: Lead[];
   users?: User[];
   onAddLead: (lead: Omit<Lead, "id" | "dateCreated" | "dateUpdated">) => void;
-  onBulkAddLeads?: (leads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[]) => void;
+  onBulkAddLeads?: (leads: Omit<Lead, "id" | "dateCreated" | "dateUpdated">[], skipDupCheck?: boolean) => void;
   onUpdateLead: (lead: Lead) => void;
   onDeleteLead: (id: string) => void;
   onBulkDeleteLeads?: (ids: string[]) => void;
@@ -842,7 +842,7 @@ export default function LeadPipeline({
   const handleCommitImport = () => {
     if (importPreviewData.length === 0) return;
     if (onBulkAddLeads) {
-      onBulkAddLeads(importPreviewData);
+      onBulkAddLeads(importPreviewData, true);
     } else {
       importPreviewData.forEach(l => onAddLead(l));
     }

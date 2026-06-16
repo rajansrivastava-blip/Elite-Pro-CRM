@@ -67,7 +67,7 @@ interface SystemSyncProps {
   leadEditLogs?: any[];
 
   // Google Sheets callback prop
-  onBulkAddLeads?: (newLeads: any[]) => Promise<void>;
+  onBulkAddLeads?: (newLeads: any[], skipDupCheck?: boolean) => Promise<void> | void;
 
   // Hoisted Google Sheets configuration states
   sheetUrl: string;
