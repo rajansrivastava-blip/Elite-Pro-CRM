@@ -692,14 +692,29 @@ export default function LeadPipeline({
 
         for (let i = 1; i < rawJson.length; i++) {
           const row = rawJson[i];
-          if (!row || row.length === 0 || row[nameIdx] === undefined || row[nameIdx] === null) continue;
+          if (!row || row.length === 0) continue;
 
-          const rawName = String(row[nameIdx]).trim();
-          if (!rawName) continue;
+          let rawName = nameIdx !== -1 && row[nameIdx] !== undefined && row[nameIdx] !== null 
+            ? String(row[nameIdx]).trim() 
+            : "";
 
           const rawProj = projectIdx !== -1 && row[projectIdx] !== undefined ? String(row[projectIdx]).trim() : "";
           const rawEmail = emailIdx !== -1 && row[emailIdx] !== undefined ? String(row[emailIdx]).trim() : "";
           const rawPhone = phoneIdx !== -1 && row[phoneIdx] !== undefined ? String(row[phoneIdx]).trim() : "";
+
+          // Bypassing completely empty spreadsheet rows
+          if (!rawName && !rawProj && !rawEmail && !rawPhone) continue;
+
+          if (!rawName) {
+            if (rawPhone && rawPhone !== "N/A" && rawPhone !== "n/a") {
+              rawName = `Prospect (${rawPhone})`;
+            } else if (rawProj) {
+              rawName = `Prospect (${rawProj})`;
+            } else {
+              rawName = "N/A";
+            }
+          }
+
           const rawSourceStr = sourceIdx !== -1 && row[sourceIdx] !== undefined ? String(row[sourceIdx]).trim() : "Website";
           const rawLoc = locationIdx !== -1 && row[locationIdx] !== undefined ? String(row[locationIdx]).trim() : "Noida, India";
           const rawStatusStr = statusIdx !== -1 && row[statusIdx] !== undefined ? String(row[statusIdx]).trim() : "New Lead";

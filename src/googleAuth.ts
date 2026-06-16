@@ -411,7 +411,16 @@ export function isDuplicateLead(
   const nlEmail = getCleanEmail(newLead.email);
   const nlPhone = getDigits(newLead.phone);
 
-  if (!nlName) return true; // skip incomplete record
+  const isGenericNameValue = (nameStr: string) => {
+    const clean = nameStr.toLowerCase().trim();
+    const generic = ["n/a", "na", "none", "anonymous", "prospect", "temp", "unknown", "customer", "client", "-", ".", "(n/a)"];
+    return generic.includes(clean) || clean.startsWith("prospect") || !clean;
+  };
+
+  // If there is no name, email, and phone at all, treat it as an empty target to avoid garbage intake
+  if (!nlName && !nlEmail && !nlPhone) {
+    return true; 
+  }
 
   return existingLeads.some(l => {
     const lName = getCleanName(l.name);
@@ -432,8 +441,8 @@ export function isDuplicateLead(
       }
     }
 
-    // 3. Name-based matching:
-    if (nlName === lName) {
+    // 3. Name-based matching (only if name is not generic or a placeholder):
+    if (nlName && lName && nlName === lName && !isGenericNameValue(nlName) && !isGenericNameValue(lName)) {
       return true;
     }
 
