@@ -632,6 +632,9 @@ export default function App() {
                 if (!merged[matchedIdx].password && lu.password) {
                   merged[matchedIdx].password = lu.password;
                 }
+                if (merged[matchedIdx].active === undefined && lu.active !== undefined) {
+                  merged[matchedIdx].active = lu.active;
+                }
               } else {
                 merged.push(lu);
               }
@@ -692,7 +695,15 @@ export default function App() {
           setUsers(prev => {
             const merged = [...loadedUsers];
             prev.forEach(lu => {
-              if (!merged.some(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase())) {
+              const matchedIdx = merged.findIndex(u => u.id === lu.id || u.email.toLowerCase() === lu.email.toLowerCase());
+              if (matchedIdx >= 0) {
+                if (!merged[matchedIdx].password && lu.password) {
+                  merged[matchedIdx].password = lu.password;
+                }
+                if (merged[matchedIdx].active === undefined && lu.active !== undefined) {
+                  merged[matchedIdx].active = lu.active;
+                }
+              } else {
                 merged.push(lu);
               }
             });
